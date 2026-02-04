@@ -89,7 +89,9 @@ namespace doantotnghiep_api.Controllers
                     ShowtimeId = s.ShowtimeId,
                     Time = s.StartTime.ToString("HH:mm"),
                     StartTime = s.StartTime,
-                    BasePrice = s.BasePrice
+                    TotalSeats = _context.Seats.Count(st => st.ScreenId == s.ScreenId),
+                    AvailableSeats = _context.Seats.Count(st => st.ScreenId == s.ScreenId) - 
+                                     _context.Bookings.Count(b => b.ShowtimeId == s.ShowtimeId && b.Status == "Hoàn thành")
                 })
                 .ToListAsync();
 

@@ -8,6 +8,7 @@
 
         public DateTime StartTime { get; set; }
 
-        public decimal BasePrice { get; set; }
+        public int TotalSeats { get; set; }
+        public int AvailableSeats { get; set; }
     }
 }
