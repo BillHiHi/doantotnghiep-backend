@@ -23,9 +23,10 @@ namespace doantotnghiep_api.Controllers
         // GET ALL
         // =====================================================
         [HttpGet]
+        [AllowAnonymous]
         public async Task<IActionResult> GetAll()
         {
-            var showtimes = await _context.Showtimes
+            var data = await _context.Showtimes
                 .AsNoTracking()
                 .OrderByDescending(s => s.StartTime)
                 .Select(s => new ShowtimeDto
@@ -34,24 +35,28 @@ namespace doantotnghiep_api.Controllers
                     MovieId = s.MovieId,
                     MovieTitle = s.Movie.Title,
                     ScreenId = s.ScreenId,
-                    ScreenName = s.Screen.ScreenName, // 👈 nhớ dùng Name nếu model là Name
+                    ScreenName = s.Screen.ScreenName,
                     StartTime = s.StartTime,
                     EndTime = s.EndTime,
-                    BasePrice = s.BasePrice
+                    TheaterId = s.Screen.TheaterId,
+                    BasePrice = s.BasePrice,
+                    TotalSeats = _context.Seats.Count(st => st.ScreenId == s.ScreenId),
+                    AvailableSeats = _context.Seats.Count(st => st.ScreenId == s.ScreenId) -
+                                     _context.Bookings.Count(b => b.ShowtimeId == s.ShowtimeId && b.Status == "Hoàn thành")
                 })
                 .ToListAsync();
 
-            return Ok(showtimes);
+            return Ok(data);
         }
-
 
         // =====================================================
         // GET DETAIL
         // =====================================================
         [HttpGet("{id}")]
+        [AllowAnonymous]
         public async Task<IActionResult> GetDetail(int id)
         {
-            var showtime = await _context.Showtimes
+            var data = await _context.Showtimes
                 .AsNoTracking()
                 .Where(s => s.ShowtimeId == id)
                 .Select(s => new ShowtimeDto
@@ -63,24 +68,28 @@ namespace doantotnghiep_api.Controllers
                     ScreenName = s.Screen.ScreenName,
                     StartTime = s.StartTime,
                     EndTime = s.EndTime,
-                    BasePrice = s.BasePrice
+                    TheaterId = s.Screen.TheaterId,
+                    BasePrice = s.BasePrice,
+                    TotalSeats = _context.Seats.Count(st => st.ScreenId == s.ScreenId),
+                    AvailableSeats = _context.Seats.Count(st => st.ScreenId == s.ScreenId) -
+                                     _context.Bookings.Count(b => b.ShowtimeId == s.ShowtimeId && b.Status == "Hoàn thành")
                 })
                 .FirstOrDefaultAsync();
 
-            if (showtime == null)
+            if (data == null)
                 return NotFound();
 
-            return Ok(showtime);
+            return Ok(data);
         }
 
-
         // =====================================================
-        // GET BY MOVIE (lịch chiếu nhẹ)
+        // GET SHOWTIMES BY MOVIE
         // =====================================================
         [HttpGet("movie/{movieId}")]
+        [AllowAnonymous]
         public async Task<IActionResult> GetByMovie(int movieId)
         {
-            var showtimes = await _context.Showtimes
+            var data = await _context.Showtimes
                 .AsNoTracking()
                 .Where(s => s.MovieId == movieId)
                 .OrderBy(s => s.StartTime)
@@ -90,14 +99,121 @@ namespace doantotnghiep_api.Controllers
                     Time = s.StartTime.ToString("HH:mm"),
                     StartTime = s.StartTime,
                     TotalSeats = _context.Seats.Count(st => st.ScreenId == s.ScreenId),
-                    AvailableSeats = _context.Seats.Count(st => st.ScreenId == s.ScreenId) - 
-                                     _context.Bookings.Count(b => b.ShowtimeId == s.ShowtimeId && b.Status == "Hoàn thành")
+                    AvailableSeats =
+                        _context.Seats.Count(st => st.ScreenId == s.ScreenId) -
+                        (_context.Bookings.Count(b => b.ShowtimeId == s.ShowtimeId && (b.Status == "Hoàn thành" || b.Status == "Paid")) +
+                         _context.SeatLocks.Count(sl => sl.ShowtimeId == s.ShowtimeId && sl.ExpiryTime > DateTime.UtcNow))
                 })
                 .ToListAsync();
 
-            return Ok(showtimes);
+            return Ok(data);
         }
 
+        // =====================================================
+        // ⭐ GET MOVIES BY THEATER
+        // =====================================================
+        [HttpGet("movies-by-theater/{theaterId}")]
+        [AllowAnonymous]
+        public async Task<IActionResult> GetMoviesByTheater(int theaterId)
+        {
+            var data = await _context.Showtimes
+                .AsNoTracking()
+                .Where(s => s.Screen.TheaterId == theaterId)
+                .Select(s => s.Movie)
+                .Distinct()
+                .ToListAsync();
+
+            return Ok(data);
+        }
+
+        // =====================================================
+        // ⭐ GET THEATERS BY MOVIE
+        // =====================================================
+        [HttpGet("theaters-by-movie/{movieId}")]
+        [AllowAnonymous]
+        public async Task<IActionResult> GetTheatersByMovie(int movieId)
+        {
+            var data = await _context.Showtimes
+                .AsNoTracking()
+                .Where(s => s.MovieId == movieId)
+                .Select(s => s.Screen.Theater)
+                .Distinct()
+                .ToListAsync();
+
+            return Ok(data);
+        }
+
+        [HttpGet("all-by-theater/{theaterId}")]
+        [AllowAnonymous]
+        public async Task<IActionResult> GetAllByTheater(int theaterId)
+        {
+            var data = await _context.Showtimes
+                .AsNoTracking()
+                .Where(s => s.Screen.TheaterId == theaterId)
+                .OrderBy(s => s.StartTime)
+                .Select(s => new ShowtimeDto
+                {
+                    ShowtimeId = s.ShowtimeId,
+                    MovieId = s.MovieId,
+                    MovieTitle = s.Movie.Title,
+                    MoviePoster = s.Movie.PosterUrl,
+                    MovieGenre = s.Movie.Genre,
+                    MovieDuration = s.Movie.Duration,
+                    MovieTrailer = s.Movie.TrailerUrl,
+                    MovieAgeRating = s.Movie.AgeRating,
+                    ScreenId = s.ScreenId,
+                    ScreenName = s.Screen.ScreenName,
+                    StartTime = s.StartTime,
+                    EndTime = s.EndTime,
+                    TheaterId = s.Screen.TheaterId,
+                    BasePrice = s.BasePrice,
+                    TotalSeats = _context.Seats.Count(st => st.ScreenId == s.ScreenId),
+                    AvailableSeats = _context.Seats.Count(st => st.ScreenId == s.ScreenId) -
+                                     (_context.Bookings.Count(b => b.ShowtimeId == s.ShowtimeId && (b.Status == "Hoàn thành" || b.Status == "Paid")) +
+                                      _context.SeatLocks.Count(sl => sl.ShowtimeId == s.ShowtimeId && sl.ExpiryTime > DateTime.UtcNow))
+                })
+                .ToListAsync();
+
+            return Ok(data);
+        }
+
+        // =====================================================
+        // ⭐ GET SHOWTIMES BY MOVIE + THEATER + DATE
+        // =====================================================
+        [HttpGet("filter")]
+        [AllowAnonymous]
+        public async Task<IActionResult> Filter(
+            int movieId,
+            int theaterId,
+            DateTime date)
+        {
+            var start = date.Date;
+            var end = start.AddDays(1);
+
+            var data = await _context.Showtimes
+                .AsNoTracking()
+                .Where(s =>
+                    s.MovieId == movieId &&
+                    s.Screen.TheaterId == theaterId &&
+                    s.StartTime >= start &&
+                    s.StartTime < end)
+                .OrderBy(s => s.StartTime)
+                .Select(s => new ShowtimeSimpleDto
+                {
+                    ShowtimeId = s.ShowtimeId,
+                    Time = s.StartTime.ToString("HH:mm"),
+                    StartTime = s.StartTime,
+                    TotalSeats = _context.Seats.Count(st => st.ScreenId == s.ScreenId),
+                    AvailableSeats =
+                        _context.Seats.Count(st => st.ScreenId == s.ScreenId) -
+                        _context.Bookings.Count(b =>
+                            b.ShowtimeId == s.ShowtimeId &&
+                            b.Status == "Hoàn thành")
+                })
+                .ToListAsync();
+
+            return Ok(data);
+        }
 
         // =====================================================
         // CREATE
@@ -124,11 +240,8 @@ namespace doantotnghiep_api.Controllers
             _context.Showtimes.Add(showtime);
             await _context.SaveChangesAsync();
 
-            return CreatedAtAction(nameof(GetDetail),
-                new { id = showtime.ShowtimeId },
-                showtime.ShowtimeId);
+            return Ok(showtime.ShowtimeId);
         }
-
 
         // =====================================================
         // UPDATE
@@ -138,7 +251,6 @@ namespace doantotnghiep_api.Controllers
         public async Task<IActionResult> Update(int id, UpdateShowtimeDto dto)
         {
             var showtime = await _context.Showtimes.FindAsync(id);
-
             if (showtime == null)
                 return NotFound();
 
@@ -153,7 +265,6 @@ namespace doantotnghiep_api.Controllers
             return NoContent();
         }
 
-
         // =====================================================
         // DELETE
         // =====================================================
@@ -162,7 +273,6 @@ namespace doantotnghiep_api.Controllers
         public async Task<IActionResult> Delete(int id)
         {
             var showtime = await _context.Showtimes.FindAsync(id);
-
             if (showtime == null)
                 return NotFound();
 
@@ -173,45 +283,34 @@ namespace doantotnghiep_api.Controllers
         }
 
         // =====================================================
-        // GET SEATS (Seat Map for SeatMap.vue)
+        // GET SEATS
         // =====================================================
         [HttpGet("{id}/seats")]
         [AllowAnonymous]
         public async Task<IActionResult> GetSeats(int id)
         {
-            // 1. Check showtime
             var showtime = await _context.Showtimes
                 .AsNoTracking()
                 .FirstOrDefaultAsync(s => s.ShowtimeId == id);
 
             if (showtime == null)
-                return NotFound("Showtime không tồn tại");
+                return NotFound();
 
-            // 2. Get seats for this screen
             var seats = await _context.Seats
                 .AsNoTracking()
                 .Where(s => s.ScreenId == showtime.ScreenId)
-                .OrderBy(s => s.RowNumber)
-                .ThenBy(s => s.SeatNumber)
                 .ToListAsync();
 
-            // 3. Get booked/locked seats
-            var bookedSeatIds = await _context.Bookings
-                .AsNoTracking()
-                .Where(b => b.ShowtimeId == id && b.Status == "Hoàn thành")
+            var booked = (await _context.Bookings
+                .Where(b => b.ShowtimeId == id && (b.Status == "Hoàn thành" || b.Status == "Paid"))
                 .Select(b => b.SeatId)
-                .ToListAsync();
+                .ToListAsync()).ToHashSet();
 
-            var lockedSeatIds = await _context.SeatLocks
-                .AsNoTracking()
+            var locked = (await _context.SeatLocks
                 .Where(l => l.ShowtimeId == id && l.ExpiryTime > DateTime.UtcNow)
                 .Select(l => l.SeatId)
-                .ToListAsync();
+                .ToListAsync()).ToHashSet();
 
-            var bookedSet = bookedSeatIds.ToHashSet();
-            var lockedSet = lockedSeatIds.ToHashSet();
-
-            // 4. Build seat map
             var result = seats
                 .GroupBy(s => s.RowNumber)
                 .Select(g => new
@@ -222,13 +321,55 @@ namespace doantotnghiep_api.Controllers
                         Id = s.SeatId,
                         Code = $"{s.RowNumber}{s.SeatNumber}",
                         Type = s.SeatType,
-                        Status = bookedSet.Contains(s.SeatId) ? "booked" :
-                                 lockedSet.Contains(s.SeatId) ? "locked" :
-                                 "available"
+                        Status =
+                            booked.Contains(s.SeatId) ? "booked" :
+                            locked.Contains(s.SeatId) ? "locked" :
+                            "available"
                     })
                 });
 
             return Ok(result);
         }
+
+        // =====================================================
+        // ⭐ SCHEDULE BY THEATER + DATE (CHO UI LỊCH CHIẾU)
+        // =====================================================
+        [HttpGet("schedule")]
+        [AllowAnonymous]
+        public async Task<IActionResult> GetSchedule(int theaterId, DateTime date)
+        {
+            var start = date.Date;
+            var end = start.AddDays(1);
+
+            var screens = await _context.Screens
+                .AsNoTracking()
+                .Where(sc => sc.TheaterId == theaterId)
+                .Select(sc => new
+                {
+                    sc.ScreenId,
+                    sc.ScreenName,
+                    sc.ScreenType,
+
+                    Showtimes = _context.Showtimes
+                        .Where(s =>
+                            s.ScreenId == sc.ScreenId &&
+                            s.StartTime >= start &&
+                            s.StartTime < end)
+                        .OrderBy(s => s.StartTime)
+                        .Select(s => new
+                        {
+                            s.ShowtimeId,
+                            MovieTitle = s.Movie.Title,
+                            s.BasePrice,
+                            Start = s.StartTime.ToString("HH:mm"),
+                            End = s.EndTime.ToString("HH:mm")
+                        })
+                        .ToList()
+                })
+                .ToListAsync();
+
+            return Ok(screens);
+        }
+
     }
 }

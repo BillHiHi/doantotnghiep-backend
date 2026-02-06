@@ -121,5 +121,74 @@ namespace doantotnghiep_api.Controllers
                 return StatusCode(500, ex.ToString());
             }
         }
+
+        // =============================================
+        // CREATE FAKE QR PAYMENT
+        // =============================================
+        [HttpPost("create-payment")]
+        public async Task<IActionResult> CreatePayment([FromBody] PaymentRequestDto dto)
+        {
+            // fake mã thanh toán
+            var paymentCode = Guid.NewGuid().ToString().Substring(0, 8);
+
+            // dùng free QR generator
+            var qrText = $"PAYMENT_{paymentCode}";
+            var qrUrl = $"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data={qrText}";
+
+            return Ok(new PaymentResultDto
+            {
+                QrUrl = qrUrl,
+                PaymentCode = paymentCode
+            });
+        }
+
+        // =============================================
+        // CONFIRM PAYMENT (FAKE SUCCESS)
+        // =============================================
+        [HttpPost("confirm-payment")]
+        public async Task<IActionResult> ConfirmPayment([FromBody] SeatHoldRequest request)
+        {
+            try
+            {
+                var now = DateTime.UtcNow;
+
+                if (request == null)
+                    return BadRequest("Request null");
+
+                var lockSeat = await _context.SeatLocks.FirstOrDefaultAsync(x =>
+                    x.SeatId == request.SeatId &&
+                    x.ShowtimeId == request.ShowtimeId &&
+                    x.UserId == request.UserId);
+
+                if (lockSeat == null)
+                    return BadRequest("Ghế chưa được giữ");
+
+                var booking = new Bookings
+                {
+                    UserId = request.UserId,
+                    ShowtimeId = request.ShowtimeId,
+                    SeatId = request.SeatId, // ⭐ FIX Ở ĐÂY
+                    BookingDate = now,
+                    Status = "Paid"
+                };
+
+                _context.Bookings.Add(booking);
+                _context.SeatLocks.Remove(lockSeat);
+
+                await _context.SaveChangesAsync();
+
+                // ⭐ Notify SignalR: Seat is now permanently occupied
+                await _hub.Clients
+                    .Group($"Showtime_{request.ShowtimeId}")
+                    .SendAsync("ReceiveSeatStatus", request.SeatId, "Locked", -1); // -1 or system ID to indicate it's not by a specific user anymore but general lock
+
+                return Ok("Thanh toán thành công");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+                return StatusCode(500, ex.ToString());
+            }
+        }
     }
 }

@@ -1,5 +1,6 @@
 ﻿using doantotnghiep_api.Data;
 using doantotnghiep_api.Dto_s;
+using doantotnghiep_api.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -18,10 +19,9 @@ namespace doantotnghiep_api.Controllers
         }
 
         // =================================================
-        // PUBLIC APIs (ai cũng xem được)
+        // PUBLIC APIs
         // =================================================
 
-        // GET: api/movies
         [HttpGet]
         [AllowAnonymous]
         public async Task<IActionResult> GetMovies()
@@ -33,7 +33,6 @@ namespace doantotnghiep_api.Controllers
             return Ok(movies);
         }
 
-        // GET: api/movies/5
         [HttpGet("{id}")]
         [AllowAnonymous]
         public async Task<IActionResult> GetMovie(int id)
@@ -47,38 +46,73 @@ namespace doantotnghiep_api.Controllers
         }
 
         // =================================================
-        // ADMIN ONLY APIs
+        // ADMIN ONLY
         // =================================================
 
-        // POST: api/movies
+        // CREATE
         [HttpPost]
         [Authorize(Roles = "Admin")]
-        public async Task<IActionResult> CreateMovie([FromBody] Movie movie)
+        public async Task<IActionResult> CreateMovie([FromBody] CreateMovieDto dto)
         {
+            var movie = new Movie
+            {
+                Title = dto.Title,
+                Description = dto.Description,
+                Duration = dto.Duration,
+                Genre = dto.Genre,
+                PosterUrl = dto.PosterUrl,
+
+                Director = dto.Director,
+                Actors = dto.Actors,
+                TrailerUrl = dto.TrailerUrl,
+
+                // ✅ NEW
+                AgeRating = dto.AgeRating,
+                Language = dto.Language,
+                Status = dto.Status,
+
+                ReleaseDate = dto.ReleaseDate
+            };
+
             _context.Movies.Add(movie);
             await _context.SaveChangesAsync();
 
             return CreatedAtAction(nameof(GetMovie), new { id = movie.MovieId }, movie);
         }
 
-        // PUT: api/movies/5
+        // UPDATE
         [HttpPut("{id}")]
         [Authorize(Roles = "Admin")]
-        public async Task<IActionResult> UpdateMovie(int id, [FromBody] Movie movie)
+        public async Task<IActionResult> UpdateMovie(int id, [FromBody] UpdateMovieDto dto)
         {
-            if (id != movie.MovieId)
-                return BadRequest("Id mismatch");
+            var movie = await _context.Movies.FindAsync(id);
 
-            var exists = await _context.Movies.AnyAsync(x => x.MovieId == id);
-            if (!exists)
+            if (movie == null)
                 return NotFound("Movie not found");
 
-            _context.Entry(movie).State = EntityState.Modified;
+            movie.Title = dto.Title;
+            movie.Description = dto.Description;
+            movie.Duration = dto.Duration;
+            movie.Genre = dto.Genre;
+            movie.PosterUrl = dto.PosterUrl;
+
+            movie.Director = dto.Director;
+            movie.Actors = dto.Actors;
+            movie.TrailerUrl = dto.TrailerUrl;
+
+            // ✅ NEW
+            movie.AgeRating = dto.AgeRating;
+            movie.Language = dto.Language;
+            movie.Status = dto.Status;
+
+            movie.ReleaseDate = dto.ReleaseDate;
+
             await _context.SaveChangesAsync();
 
             return NoContent();
         }
 
+        // DELETE
         [HttpDelete("{id}")]
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> DeleteMovie(int id)
@@ -94,6 +128,10 @@ namespace doantotnghiep_api.Controllers
             return NoContent();
         }
 
+        // =================================================
+        // UPLOAD POSTER
+        // =================================================
+
         [HttpPost("upload")]
         [Authorize(Roles = "Admin")]
         [Consumes("multipart/form-data")]
@@ -104,7 +142,6 @@ namespace doantotnghiep_api.Controllers
             if (file == null || file.Length == 0)
                 return BadRequest("No file uploaded");
 
-            // tạo thư mục uploads nếu chưa có
             var uploadsFolder = Path.Combine(
                 Directory.GetCurrentDirectory(),
                 "wwwroot",
@@ -113,15 +150,12 @@ namespace doantotnghiep_api.Controllers
 
             Directory.CreateDirectory(uploadsFolder);
 
-            // tạo tên file random
             var fileName = $"{Guid.NewGuid()}{Path.GetExtension(file.FileName)}";
             var filePath = Path.Combine(uploadsFolder, fileName);
 
-            // save file
             await using var stream = new FileStream(filePath, FileMode.Create);
             await file.CopyToAsync(stream);
 
-            // trả url
             var fileUrl = $"{Request.Scheme}://{Request.Host}/uploads/{fileName}";
 
             return Ok(new

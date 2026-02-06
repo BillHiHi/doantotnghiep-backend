@@ -12,8 +12,8 @@ using doantotnghiep_api.Data;
 namespace doantotnghiep_api.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260201015008_InitialBaseline")]
-    partial class InitialBaseline
+    [Migration("20260206033539_update_movies")]
+    partial class update_movies
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -33,7 +33,20 @@ namespace doantotnghiep_api.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("MovieId"));
 
+                    b.Property<string>("Actors")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("AgeRating")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
+
                     b.Property<string>("Description")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Director")
+                        .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<int>("Duration")
@@ -42,6 +55,11 @@ namespace doantotnghiep_api.Migrations
                     b.Property<string>("Genre")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Language")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
 
                     b.Property<string>("PosterUrl")
                         .IsRequired()
@@ -55,6 +73,10 @@ namespace doantotnghiep_api.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("TrailerUrl")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
@@ -85,7 +107,6 @@ namespace doantotnghiep_api.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<decimal>("TotalAmount")
-                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<int>("UserId")
@@ -93,7 +114,9 @@ namespace doantotnghiep_api.Migrations
 
                     b.HasKey("BookingId");
 
-                    b.ToTable("Bookings", (string)null);
+                    b.HasIndex("SeatId");
+
+                    b.ToTable("Bookings");
                 });
 
             modelBuilder.Entity("doantotnghiep_api.Models.Screen", b =>
@@ -153,13 +176,16 @@ namespace doantotnghiep_api.Migrations
 
             modelBuilder.Entity("doantotnghiep_api.Models.SeatLock", b =>
                 {
-                    b.Property<int>("Id")
+                    b.Property<int>("LockId")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("int");
 
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("LockId"));
 
                     b.Property<DateTime>("ExpiryTime")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("LockedAt")
                         .HasColumnType("datetime2");
 
                     b.Property<int>("SeatId")
@@ -171,7 +197,7 @@ namespace doantotnghiep_api.Migrations
                     b.Property<int>("UserId")
                         .HasColumnType("int");
 
-                    b.HasKey("Id");
+                    b.HasKey("LockId");
 
                     b.ToTable("SeatLocks");
                 });
@@ -185,7 +211,6 @@ namespace doantotnghiep_api.Migrations
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("ShowtimeId"));
 
                     b.Property<decimal>("BasePrice")
-                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<DateTime>("EndTime")
@@ -217,16 +242,21 @@ namespace doantotnghiep_api.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("UserId"));
 
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
                     b.Property<string>("Email")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("FullName")
-                        .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("PasswordHash")
                         .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PhoneNumber")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("Role")
@@ -236,6 +266,17 @@ namespace doantotnghiep_api.Migrations
                     b.HasKey("UserId");
 
                     b.ToTable("Users");
+                });
+
+            modelBuilder.Entity("doantotnghiep_api.Models.Bookings", b =>
+                {
+                    b.HasOne("doantotnghiep_api.Models.Seat", "Seat")
+                        .WithMany()
+                        .HasForeignKey("SeatId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Seat");
                 });
 
             modelBuilder.Entity("doantotnghiep_api.Models.Seat", b =>

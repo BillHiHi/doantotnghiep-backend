@@ -25,5 +25,8 @@ namespace doantotnghiep_api.Data
         public DbSet<Bookings> Bookings { get; set; }  
         public DbSet<Seat> Seats { get; set; }
         public DbSet<Screen> Screens { get; set; }
+        public DbSet<Banner> Banners { get; set; }
+        public DbSet<Theater> Theaters { get; set; }
+
     }
 }

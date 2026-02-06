@@ -7,7 +7,14 @@ public class Screen
     public string ScreenName { get; set; } = "";
     public string ScreenType { get; set; } = "";
 
-    public ICollection<Seat> Seats { get; set; } = new List<Seat>();
-    public ICollection<Showtime> Showtimes { get; set; } = new List<Showtime>();
-}
+    [System.Text.Json.Serialization.JsonIgnore]
+    public ICollection<Seat>? Seats { get; set; }
+    
+    [System.Text.Json.Serialization.JsonIgnore]
+    public ICollection<Showtime>? Showtimes { get; set; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public Theater? Theater { get; set; } 
+
+    }
 }
