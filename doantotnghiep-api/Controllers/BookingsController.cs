@@ -128,18 +128,77 @@ namespace doantotnghiep_api.Controllers
         [HttpPost("create-payment")]
         public async Task<IActionResult> CreatePayment([FromBody] PaymentRequestDto dto)
         {
-            // fake mã thanh toán
-            var paymentCode = Guid.NewGuid().ToString().Substring(0, 8);
-
-            // dùng free QR generator
-            var qrText = $"PAYMENT_{paymentCode}";
-            var qrUrl = $"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data={qrText}";
-
-            return Ok(new PaymentResultDto
+            try
             {
-                QrUrl = qrUrl,
-                PaymentCode = paymentCode
-            });
+                if (dto == null || dto.SeatIds == null || !dto.SeatIds.Any())
+                    return BadRequest("Thiếu thông tin ghế");
+
+                var now = DateTime.UtcNow;
+
+                // Lock ghế ngay khi chuẩn bị thanh toán
+                foreach (var seatId in dto.SeatIds)
+                {
+                    // Check if already locked by someone else
+                    var isLocked = await _context.SeatLocks.AnyAsync(x =>
+                        x.SeatId == seatId &&
+                        x.ShowtimeId == dto.ShowtimeId &&
+                        x.ExpiryTime > now &&
+                        x.UserId != dto.UserId);
+
+                    if (isLocked)
+                        return BadRequest($"Ghế ID {seatId} đã bị người khác giữ");
+
+                    // Nếu mình đã giữ rồi thì update expiry, chưa thì tạo mới
+                    var myLock = await _context.SeatLocks.FirstOrDefaultAsync(x =>
+                        x.SeatId == seatId &&
+                        x.ShowtimeId == dto.ShowtimeId &&
+                        x.UserId == dto.UserId);
+
+                    if (myLock != null)
+                    {
+                        myLock.ExpiryTime = now.AddMinutes(10);
+                    }
+                    else
+                    {
+                        var seatLock = new SeatLock
+                        {
+                            SeatId = seatId,
+                            ShowtimeId = dto.ShowtimeId,
+                            UserId = dto.UserId,
+                            LockedAt = now,
+                            ExpiryTime = now.AddMinutes(10)
+                        };
+                        _context.SeatLocks.Add(seatLock);
+                    }
+                }
+
+                await _context.SaveChangesAsync();
+
+                // Notify SignalR
+                foreach (var seatId in dto.SeatIds)
+                {
+                    await _hub.Clients
+                        .Group($"Showtime_{dto.ShowtimeId}")
+                        .SendAsync("ReceiveSeatStatus", seatId, "Locked", dto.UserId);
+                }
+
+                // fake mã thanh toán
+                var paymentCode = Guid.NewGuid().ToString().Substring(0, 8);
+
+                // dùng free QR generator
+                var qrText = $"PAYMENT_{paymentCode}";
+                var qrUrl = $"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data={qrText}";
+
+                return Ok(new PaymentResultDto
+                {
+                    QrUrl = qrUrl,
+                    PaymentCode = paymentCode
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, ex.ToString());
+            }
         }
 
         // =============================================

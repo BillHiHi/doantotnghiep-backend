@@ -1,4 +1,5 @@
 ﻿using doantotnghiep_api.Data;
+using doantotnghiep_api.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -21,10 +22,74 @@ namespace doantotnghiep_api.Controllers
         // =========================
         [HttpGet]
         [AllowAnonymous]
-        public async Task<IActionResult> GetTheaters()
+        public async Task<IActionResult> GetTheaters([FromQuery] string? city = null)
         {
-            var theaters = await _context.Theaters.ToListAsync();
+            var query = _context.Theaters.AsQueryable();
+
+            if (!string.IsNullOrEmpty(city))
+            {
+                query = query.Where(t => t.City == city);
+            }
+
+            var theaters = await query.ToListAsync();
             return Ok(theaters);
+        }
+
+        // =========================
+        // Thêm rạp mới
+        // =========================
+        [HttpPost]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> CreateTheater([FromBody] Theater theater)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            _context.Theaters.Add(theater);
+            await _context.SaveChangesAsync();
+
+            return CreatedAtAction(nameof(GetTheaters), new { id = theater.TheaterId }, theater);
+        }
+
+        // =========================
+        // Cập nhật rạp
+        // =========================
+        [HttpPut("{id}")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> UpdateTheater(int id, [FromBody] Theater updatedTheater)
+        {
+            if (id != updatedTheater.TheaterId)
+                return BadRequest("Id không khớp");
+
+            var theater = await _context.Theaters.FindAsync(id);
+
+            if (theater == null)
+                return NotFound("Không tìm thấy rạp");
+
+            theater.Name = updatedTheater.Name;
+            theater.Address = updatedTheater.Address;
+            theater.City = updatedTheater.City;
+
+            await _context.SaveChangesAsync();
+
+            return Ok(theater);
+        }
+
+        // =========================
+        // Xóa rạp
+        // =========================
+        [HttpDelete("{id}")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> DeleteTheater(int id)
+        {
+            var theater = await _context.Theaters.FindAsync(id);
+            if (theater == null)
+                return NotFound("Không tìm thấy rạp");
+
+            _context.Theaters.Remove(theater);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = "Xóa rạp thành công" });
         }
 
         // =========================

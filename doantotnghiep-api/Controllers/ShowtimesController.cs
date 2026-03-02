@@ -226,14 +226,28 @@ namespace doantotnghiep_api.Controllers
             if (movie == null)
                 return BadRequest("Movie not found");
 
+            var newStartTime = dto.StartTime;
+            var newEndTime = dto.EndTime == default
+                ? dto.StartTime.AddMinutes(movie.Duration + 15)
+                : dto.EndTime;
+
+            // Kiểm tra trùng lịch
+            var isOverlapping = await _context.Showtimes
+                .AnyAsync(s => s.ScreenId == dto.ScreenId &&
+                               s.StartTime < newEndTime &&
+                               s.EndTime > newStartTime);
+
+            if (isOverlapping)
+            {
+                return BadRequest("Lịch chiếu bị trùng với một suất chiếu khác tại phòng này.");
+            }
+
             var showtime = new Showtime
             {
                 MovieId = dto.MovieId,
                 ScreenId = dto.ScreenId,
-                StartTime = dto.StartTime,
-                EndTime = dto.EndTime == default
-                    ? dto.StartTime.AddMinutes(movie.Duration + 15)
-                    : dto.EndTime,
+                StartTime = newStartTime,
+                EndTime = newEndTime,
                 BasePrice = dto.BasePrice
             };
 
@@ -254,10 +268,31 @@ namespace doantotnghiep_api.Controllers
             if (showtime == null)
                 return NotFound();
 
+            var movie = await _context.Movies.FindAsync(dto.MovieId);
+            if (movie == null)
+                return BadRequest("Movie not found");
+
+            var newStartTime = dto.StartTime;
+            var newEndTime = dto.EndTime == default
+                ? dto.StartTime.AddMinutes(movie.Duration + 15)
+                : dto.EndTime;
+
+            // Kiểm tra trùng lịch (bỏ qua showtime hiện tại)
+            var isOverlapping = await _context.Showtimes
+                .AnyAsync(s => s.ShowtimeId != id &&
+                               s.ScreenId == dto.ScreenId &&
+                               s.StartTime < newEndTime &&
+                               s.EndTime > newStartTime);
+
+            if (isOverlapping)
+            {
+                return BadRequest("Lịch chiếu bị trùng với một suất chiếu khác tại phòng này.");
+            }
+
             showtime.MovieId = dto.MovieId;
             showtime.ScreenId = dto.ScreenId;
-            showtime.StartTime = dto.StartTime;
-            showtime.EndTime = dto.EndTime;
+            showtime.StartTime = newStartTime;
+            showtime.EndTime = newEndTime;
             showtime.BasePrice = dto.BasePrice;
 
             await _context.SaveChangesAsync();
@@ -306,10 +341,10 @@ namespace doantotnghiep_api.Controllers
                 .Select(b => b.SeatId)
                 .ToListAsync()).ToHashSet();
 
-            var locked = (await _context.SeatLocks
+            var locked = await _context.SeatLocks
+                .AsNoTracking()
                 .Where(l => l.ShowtimeId == id && l.ExpiryTime > DateTime.UtcNow)
-                .Select(l => l.SeatId)
-                .ToListAsync()).ToHashSet();
+                .ToDictionaryAsync(l => l.SeatId, l => l.UserId);
 
             var result = seats
                 .GroupBy(s => s.RowNumber)
@@ -323,8 +358,9 @@ namespace doantotnghiep_api.Controllers
                         Type = s.SeatType,
                         Status =
                             booked.Contains(s.SeatId) ? "booked" :
-                            locked.Contains(s.SeatId) ? "locked" :
-                            "available"
+                            locked.ContainsKey(s.SeatId) ? "locked" :
+                            "available",
+                        LockerId = locked.ContainsKey(s.SeatId) ? locked[s.SeatId] : 0
                     })
                 });
 
