@@ -1,16 +1,55 @@
-﻿using System.Text;
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
+using System.Text;
 using doantotnghiep_api.Data;
 using doantotnghiep_api.Hubs;
 using doantotnghiep_api.Models;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using Npgsql;
 
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
 var builder = WebApplication.CreateBuilder(args);
+
+
+
+// ========================================
+// DATABASE CONFIG (Railway + Local)
+// ========================================
+
+var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
+
+string connectionString;
+
+if (!string.IsNullOrEmpty(databaseUrl))
+{
+    var uri = new Uri(databaseUrl);
+    var userInfo = uri.UserInfo.Split(':');
+
+    var dbBuilder = new NpgsqlConnectionStringBuilder
+    {
+        Host = uri.Host,
+        Port = uri.Port,
+        Username = userInfo[0],
+        Password = userInfo[1],
+        Database = uri.AbsolutePath.Trim('/'),
+        SslMode = SslMode.Require,
+        TrustServerCertificate = true
+    };
+
+    connectionString = dbBuilder.ToString();
+}
+else
+{
+    connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+}
+
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseNpgsql(connectionString));
+
+
 
 // ========================================
 // SERVICES
@@ -22,6 +61,7 @@ builder.Services.AddControllers()
         options.JsonSerializerOptions.ReferenceHandler =
             System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
     });
+
 builder.Services.AddEndpointsApiExplorer();
 
 
@@ -53,13 +93,6 @@ builder.Services.AddSwaggerGen(options =>
         }
     });
 });
-
-
-// ================= Database =================
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(
-        builder.Configuration.GetConnectionString("DefaultConnection")
-    ));
 
 
 // ================= CORS =================
@@ -106,6 +139,7 @@ builder.Services.AddAuthorization();
 builder.Services.AddSignalR();
 
 
+
 // ========================================
 // APP PIPELINE
 // ========================================
@@ -130,11 +164,12 @@ app.UseStaticFiles(new StaticFileOptions
     }
 });
 
-app.UseAuthentication(); // MUST BEFORE Authorization
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
 app.MapHub<BookingHub>("/Bookings");
+
 
 
 // ========================================
@@ -167,12 +202,38 @@ using (var scope = app.Services.CreateScope())
             CreatedAt = DateTime.UtcNow
         });
 
-        context.SaveChanges();
+        context.SaveChanges(); 
 
         Console.WriteLine("🔥 Admin created:");
         Console.WriteLine("Email: admin@cinema.com");
         Console.WriteLine("Password: 123456");
     }
+}
+
+// Tự động kiểm tra và tạo bảng nếu thiếu (Sửa lỗi relation does not exist)
+using (var scope = app.Services.CreateScope())
+{
+    var services = scope.ServiceProvider;
+    var context = services.GetRequiredService<AppDbContext>();
+    // context.Database.Migrate(); // Bạn có thể dùng lệnh này nếu muốn chạy tất cả migration
+    
+    // Hoặc ép tạo bảng bằng SQL script nếu table chưa tồn tại
+    var conn = context.Database.GetDbConnection();
+    try {
+        await context.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ""Promotions"" (
+                ""PromotionId"" SERIAL PRIMARY KEY,
+                ""Title"" VARCHAR(200) NOT NULL,
+                ""Summary"" TEXT,
+                ""Content"" TEXT,
+                ""ImageUrl"" TEXT,
+                ""StartDate"" TIMESTAMP WITH TIME ZONE NOT NULL,
+                ""EndDate"" TIMESTAMP WITH TIME ZONE NOT NULL,
+                ""IsPublished"" BOOLEAN NOT NULL,
+                ""CreatedAt"" TIMESTAMP WITH TIME ZONE NOT NULL
+            );
+        ");
+    } catch { }
 }
 
 app.Run();

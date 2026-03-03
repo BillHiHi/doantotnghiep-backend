@@ -28,5 +28,8 @@ namespace doantotnghiep_api.Data
         public DbSet<Banner> Banners { get; set; }
         public DbSet<Theater> Theaters { get; set; }
 
+        public DbSet<Foods> Foods { get; set; }
+        public DbSet<Promotion> Promotions { get; set; }
+
     }
 }

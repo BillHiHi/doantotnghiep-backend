@@ -20,6 +20,8 @@
         public string MovieAgeRating { get; set; } = "P";
 
         public int TheaterId { get; set; }
+        public string TheaterName { get; set; } = string.Empty;
+        public string ScreenType { get; set; } = string.Empty;
         public decimal BasePrice { get; set; }
         public int AvailableSeats { get; set; }
         public int TotalSeats { get; set; }

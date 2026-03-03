@@ -64,15 +64,22 @@ namespace doantotnghiep_api.Controllers
                     ShowtimeId = s.ShowtimeId,
                     MovieId = s.MovieId,
                     MovieTitle = s.Movie.Title,
+                    MoviePoster = s.Movie.PosterUrl,
+                    MovieGenre = s.Movie.Genre,
+                    MovieDuration = s.Movie.Duration,
+                    MovieAgeRating = s.Movie.AgeRating,
                     ScreenId = s.ScreenId,
                     ScreenName = s.Screen.ScreenName,
+                    ScreenType = s.Screen.ScreenType,
                     StartTime = s.StartTime,
                     EndTime = s.EndTime,
                     TheaterId = s.Screen.TheaterId,
+                    TheaterName = s.Screen.Theater.Name,
                     BasePrice = s.BasePrice,
                     TotalSeats = _context.Seats.Count(st => st.ScreenId == s.ScreenId),
                     AvailableSeats = _context.Seats.Count(st => st.ScreenId == s.ScreenId) -
-                                     _context.Bookings.Count(b => b.ShowtimeId == s.ShowtimeId && b.Status == "Hoàn thành")
+                                     (_context.Bookings.Count(b => b.ShowtimeId == s.ShowtimeId && (b.Status == "Hoàn thành" || b.Status == "Paid")) +
+                                      _context.SeatLocks.Count(sl => sl.ShowtimeId == s.ShowtimeId && sl.ExpiryTime > DateTime.UtcNow))
                 })
                 .FirstOrDefaultAsync();
 
@@ -163,9 +170,11 @@ namespace doantotnghiep_api.Controllers
                     MovieAgeRating = s.Movie.AgeRating,
                     ScreenId = s.ScreenId,
                     ScreenName = s.Screen.ScreenName,
+                    ScreenType = s.Screen.ScreenType,
                     StartTime = s.StartTime,
                     EndTime = s.EndTime,
                     TheaterId = s.Screen.TheaterId,
+                    TheaterName = s.Screen.Theater.Name,
                     BasePrice = s.BasePrice,
                     TotalSeats = _context.Seats.Count(st => st.ScreenId == s.ScreenId),
                     AvailableSeats = _context.Seats.Count(st => st.ScreenId == s.ScreenId) -
