@@ -24,4 +24,4 @@ ENV ASPNETCORE_HTTP_PORTS=8080
 EXPOSE 8080
 
 # Tạm thời cứ giữ nguyên dòng này, nếu lỗi chúng ta sẽ xem log để sửa
-ENTRYPOINT ["dotnet", "doantotnghiep_api.dll"]
+ENTRYPOINT ["dotnet", "doantotnghiep-api.dll"]
