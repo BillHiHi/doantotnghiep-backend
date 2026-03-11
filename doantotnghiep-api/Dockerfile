@@ -1,27 +1,24 @@
-﻿FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+﻿# Giai đoạn 1: Build ứng dụng
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /app
 
-# Copy toàn bộ source code vào container
-COPY . ./
-
-# Restore các packages
+# Copy file .csproj và restore các thư viện (packages)
+# LƯU Ý: Thay "TenProjectCuaBan.csproj" bằng tên file thực tế của bạn
+COPY *.csproj ./
 RUN dotnet restore
 
-# Build project ra thư mục 'out'
+# Copy toàn bộ code còn lại và build
+COPY . ./
 RUN dotnet publish -c Release -o out
 
-# -----------------------------------------------------------------
-# LỆNH VÀNG: In danh sách toàn bộ file trong thư mục out lên màn hình log
-RUN ls -la out
-# -----------------------------------------------------------------
-
+# Giai đoạn 2: Chạy ứng dụng (Dùng image runtime nhẹ hơn)
 FROM mcr.microsoft.com/dotnet/aspnet:8.0
 WORKDIR /app
-COPY --from=build /app/out ./
+COPY --from=build /app/out .
 
-# Thiết lập Port 8080 chuẩn của .NET 8 để Railway nhận diện
-ENV ASPNETCORE_HTTP_PORTS=8080
+# Mở cổng 8080 (Render thường yêu cầu cổng này cho ứng dụng Web)
 EXPOSE 8080
+ENV ASPNETCORE_URLS=http://+:8080
 
 # Tạm thời cứ giữ nguyên dòng này, nếu lỗi chúng ta sẽ xem log để sửa
 ENTRYPOINT ["dotnet", "doantotnghiep-api.dll"]
