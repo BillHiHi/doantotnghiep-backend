@@ -18,5 +18,6 @@ COPY --from=build /app/out ./
 ENV ASPNETCORE_HTTP_PORTS=8080
 EXPOSE 8080
 
-# ⚠️ BẠN NHỚ SỬA LẠI TÊN FILE DLL DƯỚI ĐÂY CHO ĐÚNG VỚI TÊN PROJECT CỦA BẠN NHÉ
-ENTRYPOINT ["dotnet", "doantotnghiep_backend.dll"]
+# SỬA LẠI DÒNG NÀY THEO TÊN FILE .CSPROJ CỦA BẠN
+# Ví dụ file là doantotnghiep_api.csproj -> sửa thành doantotnghiep_api.dll
+ENTRYPOINT ["dotnet", "doantotnghiep_api.dll"]
