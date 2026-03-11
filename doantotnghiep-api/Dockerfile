@@ -10,6 +10,11 @@ RUN dotnet restore
 # Build project ra thư mục 'out'
 RUN dotnet publish -c Release -o out
 
+# -----------------------------------------------------------------
+# LỆNH VÀNG: In danh sách toàn bộ file trong thư mục out lên màn hình log
+RUN ls -la out
+# -----------------------------------------------------------------
+
 FROM mcr.microsoft.com/dotnet/aspnet:8.0
 WORKDIR /app
 COPY --from=build /app/out ./
@@ -18,6 +23,5 @@ COPY --from=build /app/out ./
 ENV ASPNETCORE_HTTP_PORTS=8080
 EXPOSE 8080
 
-# SỬA LẠI DÒNG NÀY THEO TÊN FILE .CSPROJ CỦA BẠN
-# Ví dụ file là doantotnghiep_api.csproj -> sửa thành doantotnghiep_api.dll
+# Tạm thời cứ giữ nguyên dòng này, nếu lỗi chúng ta sẽ xem log để sửa
 ENTRYPOINT ["dotnet", "doantotnghiep_api.dll"]
