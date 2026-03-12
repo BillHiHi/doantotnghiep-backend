@@ -1,4 +1,4 @@
-﻿using doantotnghiep_api.Data;
+using doantotnghiep_api.Data;
 using doantotnghiep_api.Dto_s;
 using doantotnghiep_api.Hubs;
 using doantotnghiep_api.Models;
@@ -58,6 +58,15 @@ namespace doantotnghiep_api.Controllers
 
                 if (!await _context.Showtimes.AnyAsync(x => x.ShowtimeId == request.ShowtimeId))
                     return BadRequest("Showtime không tồn tại");
+
+                // Giới hạn 8 ghế
+                var currentLocksCount = await _context.SeatLocks.CountAsync(x =>
+                    x.UserId == request.UserId &&
+                    x.ShowtimeId == request.ShowtimeId &&
+                    x.ExpiryTime > now);
+
+                if (currentLocksCount >= 8)
+                    return BadRequest("Vui lòng thanh toán để chọn thêm ghế");
 
                 var locked = await _context.SeatLocks.AnyAsync(x =>
                     x.SeatId == request.SeatId &&
@@ -135,6 +144,9 @@ namespace doantotnghiep_api.Controllers
 
                 var now = DateTime.UtcNow;
 
+                // tạo mã thanh toán duy nhất: ví dụ RF123456
+                var paymentCode = "RF" + new Random().Next(100000, 999999).ToString();
+                
                 // Lock ghế ngay khi chuẩn bị thanh toán
                 foreach (var seatId in dto.SeatIds)
                 {
@@ -148,7 +160,7 @@ namespace doantotnghiep_api.Controllers
                     if (isLocked)
                         return BadRequest($"Ghế ID {seatId} đã bị người khác giữ");
 
-                    // Nếu mình đã giữ rồi thì update expiry, chưa thì tạo mới
+                    // Nếu mình đã giữ rồi thì update expiry và PaymentCode, chưa thì tạo mới
                     var myLock = await _context.SeatLocks.FirstOrDefaultAsync(x =>
                         x.SeatId == seatId &&
                         x.ShowtimeId == dto.ShowtimeId &&
@@ -156,7 +168,9 @@ namespace doantotnghiep_api.Controllers
 
                     if (myLock != null)
                     {
-                        myLock.ExpiryTime = now.AddMinutes(10);
+                        myLock.ExpiryTime = now.AddMinutes(15); // Tăng thời gian chờ thanh toán
+                        myLock.PaymentCode = paymentCode;
+                        myLock.TotalAmount = dto.TotalAmount;
                     }
                     else
                     {
@@ -166,7 +180,9 @@ namespace doantotnghiep_api.Controllers
                             ShowtimeId = dto.ShowtimeId,
                             UserId = dto.UserId,
                             LockedAt = now,
-                            ExpiryTime = now.AddMinutes(10)
+                            ExpiryTime = now.AddMinutes(15),
+                            PaymentCode = paymentCode,
+                            TotalAmount = dto.TotalAmount
                         };
                         _context.SeatLocks.Add(seatLock);
                     }
@@ -182,12 +198,12 @@ namespace doantotnghiep_api.Controllers
                         .SendAsync("ReceiveSeatStatus", seatId, "Locked", dto.UserId);
                 }
 
-                // fake mã thanh toán
-                var paymentCode = Guid.NewGuid().ToString().Substring(0, 8);
-
-                // dùng free QR generator
-                var qrText = $"PAYMENT_{paymentCode}";
-                var qrUrl = $"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data={qrText}";
+                // Sử dụng định dạng VietQR để khách hàng quét mã là có sẵn STK, Số tiền và Nội dung
+                // Bạn hãy thay ACCOUNT_NUMBER và BANK_NAME bằng thông tin của bạn
+                // Hoặc sử dụng dịch vụ của SePay: https://qr.sepay.vn/img?acc=STK&bank=NGAN_HANG&amount=TIEN&des=NOI_DUNG
+                var bankAccount = "YOUR_STK"; 
+                var bankName = "YOUR_BANK";
+                var qrUrl = $"https://qr.sepay.vn/img?acc={bankAccount}&bank={bankName}&amount={dto.TotalAmount}&des={paymentCode}";
 
                 return Ok(new PaymentResultDto
                 {
@@ -214,21 +230,31 @@ namespace doantotnghiep_api.Controllers
                 if (request == null)
                     return BadRequest("Request null");
 
+                // Kiểm tra xem đã có booking chưa (phòng trường hợp Webhook đã xử lý xong)
+                var existingBooking = await _context.Bookings.AnyAsync(x =>
+                    x.SeatId == request.SeatId &&
+                    x.ShowtimeId == request.ShowtimeId &&
+                    x.Status == "Paid");
+
+                if (existingBooking)
+                    return Ok("Thanh toán thành công (đã xác nhận trước đó)");
+
                 var lockSeat = await _context.SeatLocks.FirstOrDefaultAsync(x =>
                     x.SeatId == request.SeatId &&
                     x.ShowtimeId == request.ShowtimeId &&
                     x.UserId == request.UserId);
 
                 if (lockSeat == null)
-                    return BadRequest("Ghế chưa được giữ");
+                    return BadRequest("Ghế chưa được giữ hoặc đã hết hạn");
 
                 var booking = new Bookings
                 {
                     UserId = request.UserId,
                     ShowtimeId = request.ShowtimeId,
-                    SeatId = request.SeatId, // ⭐ FIX Ở ĐÂY
+                    SeatId = request.SeatId,
                     BookingDate = now,
-                    Status = "Paid"
+                    Status = "Paid",
+                    TotalAmount = lockSeat.TotalAmount ?? 0
                 };
 
                 _context.Bookings.Add(booking);
@@ -236,10 +262,10 @@ namespace doantotnghiep_api.Controllers
 
                 await _context.SaveChangesAsync();
 
-                // ⭐ Notify SignalR: Seat is now permanently occupied
+                // Notify SignalR: Seat is now permanently occupied
                 await _hub.Clients
                     .Group($"Showtime_{request.ShowtimeId}")
-                    .SendAsync("ReceiveSeatStatus", request.SeatId, "Locked", -1); // -1 or system ID to indicate it's not by a specific user anymore but general lock
+                    .SendAsync("ReceiveSeatStatus", request.SeatId, "Locked", -1);
 
                 return Ok("Thanh toán thành công");
             }
