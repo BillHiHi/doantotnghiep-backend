@@ -201,8 +201,8 @@ namespace doantotnghiep_api.Controllers
                 // Sử dụng định dạng VietQR để khách hàng quét mã là có sẵn STK, Số tiền và Nội dung
                 // Bạn hãy thay ACCOUNT_NUMBER và BANK_NAME bằng thông tin của bạn
                 // Hoặc sử dụng dịch vụ của SePay: https://qr.sepay.vn/img?acc=STK&bank=NGAN_HANG&amount=TIEN&des=NOI_DUNG
-                var bankAccount = "YOUR_STK"; 
-                var bankName = "YOUR_BANK";
+                var bankAccount = "0949997985"; 
+                var bankName = "MB BANK";
                 var qrUrl = $"https://qr.sepay.vn/img?acc={bankAccount}&bank={bankName}&amount={dto.TotalAmount}&des={paymentCode}";
 
                 return Ok(new PaymentResultDto
