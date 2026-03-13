@@ -247,6 +247,10 @@ using (var scope = app.Services.CreateScope())
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE lower(table_name)='seatlocks' AND lower(column_name)='totalamount') THEN
                     ALTER TABLE ""SeatLocks"" ADD COLUMN ""TotalAmount"" DECIMAL(18,2);
                 END IF;
+
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE lower(table_name)='seatlocks' AND lower(column_name)='combos') THEN
+                    ALTER TABLE ""SeatLocks"" ADD COLUMN ""Combos"" TEXT;
+                END IF;
             END $$;
         ");
     } catch (Exception ex) { 

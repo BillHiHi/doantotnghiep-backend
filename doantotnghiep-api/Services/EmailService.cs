@@ -65,84 +65,102 @@ namespace doantotnghiep_api.Services
             }
         }
 
-        public async Task SendTicketEmailAsync(string toEmail, string fullName, string phoneNumber, string movieTitle, string posterUrl, string theaterName, string theaterAddress, DateTime showtime, DateTime bookingDate, string paymentCode, decimal totalAmount, string seats)
+        public async Task SendTicketEmailAsync(string toEmail, string fullName, string phoneNumber, string movieTitle, string posterUrl, string theaterName, string theaterAddress, string screenName, DateTime showtime, DateTime bookingDate, string paymentCode, decimal totalAmount, string seats, string comboDetails)
         {
             var qrUrl = $"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={paymentCode}";
+            var subject = $"Vé Cinema: {movieTitle} - {paymentCode}";
             
-            var subject = $"🎟️ Xác nhận đặt vé thành công: {movieTitle}";
+            if (string.IsNullOrEmpty(posterUrl)) posterUrl = "https://placehold.co/300x450?text=No+Poster";
+
             var body = $@"
-                <div style='font-family: ""Segoe UI"", Roboto, Helvetica, Arial, sans-serif; max-width: 650px; margin: 0 auto; background-color: #f4f7f9; padding: 20px;'>
-                    <div style='background: #fff; border-radius: 20px; overflow: hidden; box-shadow: 0 15px 45px rgba(0,0,0,0.1);'>
-                        
-                        <!-- Header Background -->
-                        <div style='background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); padding: 40px 20px; text-align: center;'>
-                            <h1 style='color: #fbbf24; margin: 0; font-size: 30px; letter-spacing: 2px; text-transform: uppercase;'>Cinema Ticket</h1>
-                            <p style='color: #94a3b8; font-size: 14px; margin-top: 10px;'>Cảm ơn bạn đã tin dùng dịch vụ của chúng tôi</p>
-                        </div>
+<div style='background-color:#f8fafc; padding:30px; font-family:""Segoe UI"", Tahoma, Geneva, Verdana, sans-serif; color:#1e293b; line-height:1.5;'>
+    <div style='max-width:600px; margin:0 auto; background:#fff; border-radius:12px; overflow:hidden; box-shadow:0 10px 15px -3px rgba(0,0,0,0.1);'>
+        
+        <!-- Header -->
+        <div style='background:#1e1b4b; padding:40px 20px; text-align:center;'>
+            <h1 style='color:#fbbf24; margin:0; font-size:24px; letter-spacing:4px; text-transform:uppercase;'>Cinema Ticket</h1>
+            <p style='color:#94a3b8; margin:10px 0 0; font-size:13px;'>Cảm ơn bạn đã lựa chọn dịch vụ của chúng tôi</p>
+        </div>
+        
+        <div style='padding:30px;'>
+            <!-- Xin chào -->
+            <h2 style='color:#0f172a; margin:0 0 10px 0; font-size:20px;'>Xin chào {fullName},</h2>
+            <p style='color:#64748b; margin:0 0 30px 0; font-size:15px;'>Giao dịch của bạn đã được xác nhận thành công.</p>
 
-                        <div style='padding: 40px;'>
-                            <h2 style='color: #1e293b; margin: 0 0 10px; font-size: 24px;'>Xin chào, {fullName}</h2>
-                            <p style='color: #64748b; margin: 0 0 30px; font-size: 16px;'>Thông tin đơn hàng của bạn đã được xác nhận thành công vào lúc <strong>{bookingDate:HH:mm dd/MM/yyyy}</strong>.</p>
+            <!-- Thông tin khách hàng -->
+            <div style='margin-bottom:30px;'>
+                <h4 style='text-transform:uppercase; color:#94a3b8; font-size:12px; margin:0 0 10px 0; letter-spacing:1px; border-bottom:1px solid #f1f5f9; padding-bottom:5px;'>Thông tin người đặt</h4>
+                <table width='100%' style='font-size:14px; border-collapse:collapse;'>
+                    <tr>
+                        <td width='120' style='color:#64748b; padding:6px 0;'>Họ tên:</td>
+                        <td style='color:#1e293b; font-weight:600; padding:6px 0;'>{fullName}</td>
+                    </tr>
+                    <tr>
+                        <td style='color:#64748b; padding:6px 0;'>Số điện thoại:</td>
+                        <td style='color:#1e293b; padding:6px 0;'>{phoneNumber}</td>
+                    </tr>
+                    <tr>
+                        <td style='color:#64748b; padding:6px 0;'>Email:</td>
+                        <td style='color:#1e293b; padding:6px 0;'>{toEmail}</td>
+                    </tr>
+                </table>
+            </div>
 
-                            <!-- Ticket Info Section -->
-                            <div style='background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 16px; display: table; width: 100%; border-collapse: separate;'>
-                                <div style='display: table-row;'>
-                                    <!-- Poster -->
-                                    <div style='display: table-cell; width: 30%; vertical-align: top; padding: 20px;'>
-                                        <img src='{posterUrl}' alt='{movieTitle}' style='width: 100%; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.1);'>
-                                    </div>
-                                    
-                                    <!-- Details -->
-                                    <div style='display: table-cell; width: 70%; vertical-align: top; padding: 20px;'>
-                                        <h3 style='margin: 0 0 15px; color: #0f172a; font-size: 22px; line-height: 1.2;'>{movieTitle}</h3>
-                                        
-                                        <table style='width: 100%; font-size: 14px; border-collapse: collapse;'>
-                                            <tr>
-                                                <td style='padding: 8px 0; color: #64748b; width: 100px;'>📍 Địa điểm:</td>
-                                                <td style='padding: 8px 0; color: #1e293b;'><strong>{theaterName}</strong><br><small style='color: #94a3b8;'>{theaterAddress}</small></td>
-                                            </tr>
-                                            <tr>
-                                                <td style='padding: 8px 0; color: #64748b;'>🕒 Thời gian:</td>
-                                                <td style='padding: 8px 0; color: #1e293b;'><strong>{showtime:HH:mm} | {showtime:dd/MM/yyyy}</strong></td>
-                                            </tr>
-                                            <tr>
-                                                <td style='padding: 8px 0; color: #64748b;'>💺 Ghế:</td>
-                                                <td style='padding: 8px 0; color: #1e293b;'><strong>{seats}</strong></td>
-                                            </tr>
-                                            <tr>
-                                                <td style='padding: 8px 0; color: #64748b;'>📞 Liên hệ:</td>
-                                                <td style='padding: 8px 0; color: #1e293b;'>{phoneNumber}</td>
-                                            </tr>
-                                        </table>
-                                    </div>
-                                </div>
+            <!-- Thông tin vé -->
+            <div style='background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:20px; margin-bottom:20px;'>
+                <h4 style='text-transform:uppercase; color:#94a3b8; font-size:12px; margin:0 0 15px 0; letter-spacing:1px; text-align:center;'>Thông tin vé xem phim</h4>
+                <table width='100%' cellpadding='0' cellspacing='0'>
+                    <tr>
+                        <td width='120' valign='top'>
+                            <img src='{posterUrl}' style='width:100px; border-radius:8px; box-shadow:0 4px 6px -1px rgba(0,0,0,0.1);' alt='Poster'>
+                        </td>
+                        <td valign='top' style='padding-left:20px;'>
+                            <h3 style='margin:0 0 12px 0; color:#1e1b4b; font-size:18px; line-height:1.3;'>{movieTitle}</h3>
+                            
+                            <div style='font-size:14px; color:#334155;'>
+                                <p style='margin:6px 0;'><strong>Rạp:</strong> {theaterName}</p>
+                                <p style='margin:4px 0 10px 0; font-size:12px; color:#64748b;'>{theaterAddress}</p>
+                                <p style='margin:6px 0;'><strong>Phòng chiếu:</strong> {screenName}</p>
+                                <p style='margin:6px 0;'><strong>Giờ chiếu:</strong> <span style='color:#0369a1; font-weight:600;'>{showtime:HH:mm} | {showtime:dd/MM/yyyy}</span></p>
+                                <p style='margin:6px 0;'><strong>Vị trí ghế:</strong> <span style='color:#e11d48; font-weight:bold;'>{seats}</span></p>
                             </div>
+                        </td>
+                    </tr>
+                </table>
+            </div>
 
-                            <!-- Payment Summary -->
-                            <div style='margin-top: 30px; padding: 20px; border-top: 2px dashed #e2e8f0; text-align: right;'>
-                                <span style='color: #64748b; font-size: 16px;'>Tổng thanh toán: </span>
-                                <span style='color: #ef4444; font-size: 24px; font-weight: 800;'>{totalAmount:N0} VNĐ</span>
-                            </div>
+            <!-- Combo -->
+            {(string.IsNullOrEmpty(comboDetails) ? "" : $@"
+            <div style='background:#fffbeb; border:1px solid #fde68a; border-radius:10px; padding:15px; margin-bottom:20px;'>
+                <p style='margin:0; font-size:14px; color:#92400e;'><strong>Combo bắp nước:</strong> {comboDetails}</p>
+            </div>
+            ")}
 
-                            <div style='margin-top: 40px; text-align: center;'>
-                                <div style='display: inline-block; background: #fff; padding: 15px; border: 1px solid #e2e8f0; border-radius: 15px;'>
-                                    <p style='margin: 0 0 10px; color: #64748b; font-size: 13px;'>Mã xác nhận (QR Code)</p>
-                                    <img src='{qrUrl}' alt='QR Code' style='width: 150px; height: 150px;'>
-                                    <p style='margin: 10px 0 0; font-family: monospace; font-size: 18px; font-weight: bold; color: #0f172a; letter-spacing: 2px;'>{paymentCode}</p>
-                                </div>
-                                <p style='color: #94a3b8; font-size: 12px; margin-top: 15px;'>Vui lòng xuất trình mã này tại quầy để nhận vé giấy.</p>
-                            </div>
+            <!-- Tổng tiền -->
+            <div style='text-align:right; padding:15px 0; border-top:1px solid #f1f5f9;'>
+                <span style='color:#64748b; font-size:14px;'>Tổng cộng:</span>
+                <span style='color:#e11d48; font-size:22px; font-weight:800; margin-left:10px;'>{totalAmount:N0} VNĐ</span>
+            </div>
 
-                        </div>
-
-                        <!-- Footer -->
-                        <div style='background: #f1f5f9; padding: 20px; text-align: center; color: #64748b; font-size: 12px;'>
-                            <p style='margin: 0;'>Đây là email xác nhận tự động từ hệ thống Cinema.</p>
-                            <p style='margin: 5px 0 0;'>&copy; 2024 Cinema Booking. Mọi quyền được bảo lưu.</p>
-                        </div>
-
-                    </div>
-                </div>";
+            <!-- QR Code -->
+            <div style='text-align:center; padding-top:20px; margin-top:10px; border-top:2px dashed #f1f5f9;'>
+                <p style='margin:0 0 15px 0; color:#64748b; font-size:13px;'>Mã QR check-in tại quầy vé</p>
+                <div style='display:inline-block; padding:15px; background:#fff; border:1px solid #e2e8f0; border-radius:8px;'>
+                    <img src='{qrUrl}' width='140' height='140' style='display:block;' alt='QR Code'>
+                </div>
+                <div style='margin-top:10px;'>
+                    <code style='background:#f1f5f9; padding:5px 15px; border-radius:4px; font-size:18px; font-weight:700; color:#0f172a; letter-spacing:2px;'>{paymentCode}</code>
+                </div>
+                <p style='margin:10px 0 0 0; color:#94a3b8; font-size:11px;'>Vui lòng cung cấp mã này cho nhân viên tại rạp để nhận vé giấy</p>
+            </div>
+        </div>
+        
+        <!-- Footer -->
+        <div style='background:#f8fafc; padding:20px; text-align:center; font-size:12px; color:#94a3b8; border-top:1px solid #f1f5f9;'>
+            <p style='margin:0;'>&copy; {DateTime.Now.Year} Cinema Booking System. All rights reserved.</p>
+        </div>
+    </div>
+</div>";
 
             await SendEmailAsync(toEmail, subject, body);
         }

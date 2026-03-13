@@ -17,13 +17,15 @@ namespace doantotnghiep_api.Controllers
         private readonly IHubContext<BookingHub> _hub;
         private readonly IEmailService _emailService;
         private readonly IServiceProvider _serviceProvider;
+        private readonly IConfiguration _configuration;
 
-        public BookingsController(AppDbContext context, IHubContext<BookingHub> hub, IEmailService emailService, IServiceProvider serviceProvider)
+        public BookingsController(AppDbContext context, IHubContext<BookingHub> hub, IEmailService emailService, IServiceProvider serviceProvider, IConfiguration configuration)
         {
             _context = context;
             _hub = hub;
             _emailService = emailService;
             _serviceProvider = serviceProvider;
+            _configuration = configuration;
         }
 
         // =============================================
@@ -176,6 +178,7 @@ namespace doantotnghiep_api.Controllers
                         myLock.ExpiryTime = now.AddMinutes(15); // Tăng thời gian chờ thanh toán
                         myLock.PaymentCode = paymentCode;
                         myLock.TotalAmount = dto.TotalAmount;
+                        myLock.Combos = dto.Combos;
                     }
                     else
                     {
@@ -187,7 +190,8 @@ namespace doantotnghiep_api.Controllers
                             LockedAt = now,
                             ExpiryTime = now.AddMinutes(15),
                             PaymentCode = paymentCode,
-                            TotalAmount = dto.TotalAmount
+                            TotalAmount = dto.TotalAmount,
+                            Combos = dto.Combos
                         };
                         _context.SeatLocks.Add(seatLock);
                     }
@@ -305,8 +309,11 @@ namespace doantotnghiep_api.Controllers
 
                                     var movie = showtime.Movie;
                                     var posterUrl = movie?.PosterUrl;
+                                    var scopedConfig = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+                                    var baseUrl = scopedConfig["AppBaseUrl"] ?? "http://localhost:5066";
+
                                     if (!string.IsNullOrEmpty(posterUrl) && !posterUrl.StartsWith("http")) {
-                                        posterUrl = "http://localhost:5066/" + posterUrl.Replace("wwwroot/", "").TrimStart('/');
+                                        posterUrl = baseUrl.TrimEnd('/') + "/" + posterUrl.Replace("wwwroot/", "").TrimStart('/');
                                     }
 
                                     await scopedEmailService.SendTicketEmailAsync(
@@ -317,11 +324,13 @@ namespace doantotnghiep_api.Controllers
                                         posterUrl ?? "",
                                         showtime.Screen?.Theater?.Name ?? "Rạp phim",
                                         showtime.Screen?.Theater?.Address ?? "",
+                                        showtime.Screen?.ScreenName ?? "Phòng chiếu",
                                         showtime.StartTime,
                                         DateTime.Now,
                                         paymentCode ?? "N/A",
                                         totalPaid,
-                                        seatNames
+                                        seatNames,
+                                        "" // Combo trống cho confirm đơn lẻ
                                     );
                                 }
                             }
@@ -418,14 +427,36 @@ namespace doantotnghiep_api.Controllers
                             {
                                 var movie = showtime.Movie;
                                 var posterUrl = movie?.PosterUrl;
-                                if (!string.IsNullOrEmpty(posterUrl) && !posterUrl.StartsWith("http"))
-                                {
-                                    posterUrl = "https://doantotnghiep-backend-whqz.onrender.com/" + posterUrl.Replace("wwwroot/", "").TrimStart('/');
-                                }
+                                    var scopedConfig = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+                                    var baseUrl = scopedConfig["AppBaseUrl"] ?? "http://localhost:5066";
+
+                                    if (!string.IsNullOrEmpty(posterUrl) && !posterUrl.StartsWith("http"))
+                                    {
+                                        posterUrl = baseUrl.TrimEnd('/') + "/" + posterUrl.Replace("wwwroot/", "").TrimStart('/');
+                                    }
 
                                 var seats = await scopedContext.Seats.Where(s => seatIds.Contains(s.SeatId)).ToListAsync();
                                 string seatNames = string.Join(", ", seats.Select(s => $"{s.RowNumber}{s.SeatNumber}"));
                                 decimal totalAmountPaid = lockedSeats.Sum(s => s.TotalAmount ?? 0);
+
+                                var firstLock = lockedSeats.FirstOrDefault();
+                                // Giải mã JSON combo bắp nước
+                                string comboText = "";
+                                if (firstLock != null && !string.IsNullOrEmpty(firstLock.Combos)) {
+                                    try {
+                                        using (var doc = System.Text.Json.JsonDocument.Parse(firstLock.Combos)) {
+                                            var items = new List<string>();
+                                            foreach (var item in doc.RootElement.EnumerateArray()) {
+                                                string name = item.GetProperty("name").GetString();
+                                                int qty = item.GetProperty("qty").GetInt32();
+                                                if (qty > 0) items.Add($"{qty}x {name}");
+                                            }
+                                            comboText = string.Join(", ", items);
+                                        }
+                                    } catch { 
+                                        comboText = firstLock?.Combos ?? "";
+                                    }
+                                }
 
                                 await scopedEmailService.SendTicketEmailAsync(
                                     user.Email,
@@ -435,11 +466,13 @@ namespace doantotnghiep_api.Controllers
                                     posterUrl ?? "",
                                     showtime.Screen?.Theater?.Name ?? "Rạp phim",
                                     showtime.Screen?.Theater?.Address ?? "",
+                                    showtime.Screen?.ScreenName ?? "Phòng chiếu",
                                     showtime.StartTime,
                                     DateTime.Now,
                                     request.PaymentCode.ToUpper(),
                                     totalAmountPaid,
-                                    seatNames
+                                    seatNames,
+                                    comboText
                                 );
                             }
                         }

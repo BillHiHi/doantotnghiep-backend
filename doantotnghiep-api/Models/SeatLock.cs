@@ -17,5 +17,7 @@ namespace doantotnghiep_api.Models
         public string? PaymentCode { get; set; }
 
         public decimal? TotalAmount { get; set; }
+
+        public string? Combos { get; set; } // ⭐ Lưu danh sách combo bắp nước (JSON)
     }
 }
