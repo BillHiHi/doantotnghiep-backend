@@ -447,7 +447,7 @@ namespace doantotnghiep_api.Controllers
                                         using (var doc = System.Text.Json.JsonDocument.Parse(firstLock.Combos)) {
                                             var items = new List<string>();
                                             foreach (var item in doc.RootElement.EnumerateArray()) {
-                                                string name = item.GetProperty("name").GetString();
+                                                string name = item.GetProperty("name").GetString() ?? "";
                                                 int qty = item.GetProperty("qty").GetInt32();
                                                 if (qty > 0) items.Add($"{qty}x {name}");
                                             }

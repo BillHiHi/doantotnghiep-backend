@@ -1,4 +1,4 @@
-﻿namespace doantotnghiep_api.Dto_s
+namespace doantotnghiep_api.Dto_s
 {
     public class RegisterRequest
     {
@@ -20,5 +20,23 @@
         public string Email { get; set; } = "";
         public string FullName { get; set; } = "";
         public string Role { get; set; } = "";
+    }
+    public class ChangePasswordRequest
+    {
+        public int UserId { get; set; }
+        public string OldPassword { get; set; } = "";
+        public string NewPassword { get; set; } = "";
+    }
+
+    public class ForgotPasswordRequest
+    {
+        public string Email { get; set; } = "";
+    }
+
+    public class UpdateProfileRequest
+    {
+        public int UserId { get; set; }
+        public string FullName { get; set; } = "";
+        public string PhoneNumber { get; set; } = "";
     }
 }
