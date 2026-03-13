@@ -1,4 +1,4 @@
-﻿using doantotnghiep_api.Data;
+using doantotnghiep_api.Data;
 using doantotnghiep_api.Dto_s;
 using doantotnghiep_api.Dtos;
 using doantotnghiep_api.Models;
@@ -346,32 +346,38 @@ namespace doantotnghiep_api.Controllers
                 .ToListAsync();
 
             var booked = (await _context.Bookings
+                .AsNoTracking()
                 .Where(b => b.ShowtimeId == id && (b.Status == "Hoàn thành" || b.Status == "Paid"))
                 .Select(b => b.SeatId)
                 .ToListAsync()).ToHashSet();
 
-            var locked = await _context.SeatLocks
+            // Sử dụng ToLookup thay vì ToDictionary để tránh lỗi 500 nếu lỡ có 2 bản ghi lock cho cùng 1 ghế
+            var lockedLookup = (await _context.SeatLocks
                 .AsNoTracking()
                 .Where(l => l.ShowtimeId == id && l.ExpiryTime > DateTime.UtcNow)
-                .ToDictionaryAsync(l => l.SeatId, l => l.UserId);
+                .ToListAsync())
+                .ToLookup(l => l.SeatId, l => l.UserId);
 
             var result = seats
+                .OrderBy(s => s.RowNumber)
+                .ThenBy(s => s.SeatNumber)
                 .GroupBy(s => s.RowNumber)
                 .Select(g => new
                 {
-                    Row = g.Key,
+                    Row = g.Key ?? "Unknown",
                     Seats = g.Select(s => new
                     {
                         Id = s.SeatId,
                         Code = $"{s.RowNumber}{s.SeatNumber}",
-                        Type = s.SeatType,
+                        Type = s.SeatType ?? "normal",
                         Status =
                             booked.Contains(s.SeatId) ? "booked" :
-                            locked.ContainsKey(s.SeatId) ? "locked" :
+                            lockedLookup.Contains(s.SeatId) ? "locked" :
                             "available",
-                        LockerId = locked.ContainsKey(s.SeatId) ? locked[s.SeatId] : 0
-                    })
-                });
+                        LockerId = lockedLookup.Contains(s.SeatId) ? lockedLookup[s.SeatId].FirstOrDefault() : 0
+                    }).ToList()
+                })
+                .ToList();
 
             return Ok(result);
         }
