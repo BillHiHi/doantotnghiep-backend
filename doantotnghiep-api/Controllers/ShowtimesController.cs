@@ -335,7 +335,9 @@ namespace doantotnghiep_api.Controllers
         {
             var showtime = await _context.Showtimes
                 .AsNoTracking()
-                .FirstOrDefaultAsync(s => s.ShowtimeId == id);
+                    .Where(s => s.ShowtimeId == id)
+                    .Select(s => new { s.ScreenId })
+                    .FirstOrDefaultAsync();
 
             if (showtime == null)
                 return NotFound();
