@@ -1,4 +1,4 @@
-﻿using System.Security.Cryptography;
+using System.Security.Cryptography;
 using System.Text;
 using doantotnghiep_api.Data;
 using doantotnghiep_api.Hubs;
@@ -9,10 +9,14 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Npgsql;
 
+using doantotnghiep_api.Services;
+
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
 var builder = WebApplication.CreateBuilder(args);
 
+// ================= Swagger + Registration =================
+builder.Services.AddScoped<IEmailService, EmailService>();
 
 
 // ========================================

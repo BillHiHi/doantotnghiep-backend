@@ -1,6 +1,7 @@
 using doantotnghiep_api.Data;
 using doantotnghiep_api.Hubs;
 using doantotnghiep_api.Models;
+using doantotnghiep_api.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -14,11 +15,15 @@ namespace doantotnghiep_api.Controllers
     {
         private readonly AppDbContext _context;
         private readonly IHubContext<BookingHub> _hub;
+        private readonly IEmailService _emailService;
+        private readonly IServiceProvider _serviceProvider;
 
-        public SePayWebhookController(AppDbContext context, IHubContext<BookingHub> hub)
+        public SePayWebhookController(AppDbContext context, IHubContext<BookingHub> hub, IEmailService emailService, IServiceProvider serviceProvider)
         {
             _context = context;
             _hub = hub;
+            _emailService = emailService;
+            _serviceProvider = serviceProvider;
         }
 
         [HttpPost]
@@ -65,14 +70,68 @@ namespace doantotnghiep_api.Controllers
                     SeatId = lockItem.SeatId,
                     BookingDate = now,
                     Status = "Paid",
-                    TotalAmount = lockItem.TotalAmount ?? 0 // Cần map đúng logic tiền từng ghế nếu cần
+                    TotalAmount = lockItem.TotalAmount ?? 0 
                 };
                 _context.Bookings.Add(booking);
             }
 
+            // GỬI EMAIL XÁC NHẬN (Lấy thông tin từ danh sách ghế vừa mua)
+            var firstLock = lockedSeats.First();
+            var seatIds = lockedSeats.Select(s => s.SeatId).ToList();
+            
+            _ = Task.Run(async () => {
+                try {
+                    using (var scope = _serviceProvider.CreateScope())
+                    {
+                        var scopedContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                        var scopedEmailService = scope.ServiceProvider.GetRequiredService<IEmailService>();
+
+                        var user = await scopedContext.Users.FindAsync(firstLock.UserId);
+                        var showtime = await scopedContext.Showtimes
+                            .Include(s => s.Movie)
+                            .Include(s => s.Screen)
+                                .ThenInclude(sc => sc.Theater)
+                            .FirstOrDefaultAsync(s => s.ShowtimeId == firstLock.ShowtimeId);
+
+                        if (user != null && !string.IsNullOrEmpty(user.Email) && showtime != null)
+                        {
+                            var movie = showtime.Movie;
+                            var posterUrl = movie?.PosterUrl;
+                            if (!string.IsNullOrEmpty(posterUrl) && !posterUrl.StartsWith("http")) {
+                                posterUrl = "http://localhost:5066/" + posterUrl.Replace("wwwroot/", "").TrimStart('/');
+                            }
+
+                            var seats = await scopedContext.Seats.Where(s => seatIds.Contains(s.SeatId)).ToListAsync();
+                            string seatNames = string.Join(", ", seats.Select(s => $"{s.RowNumber}{s.SeatNumber}"));
+                            decimal totalAmountPaid = lockedSeats.Sum(s => s.TotalAmount ?? 0);
+
+                            await scopedEmailService.SendTicketEmailAsync(
+                                user.Email,
+                                user.FullName ?? "Khách hàng",
+                                user.PhoneNumber ?? "N/A",
+                                movie?.Title ?? "Phim",
+                                posterUrl ?? "",
+                                showtime.Screen?.Theater?.Name ?? "Rạp phim",
+                                showtime.Screen?.Theater?.Address ?? "",
+                                showtime.StartTime,
+                                DateTime.Now,
+                                paymentCode.ToUpper(),
+                                totalAmountPaid,
+                                seatNames
+                            );
+                        }
+                    }
+                } catch (Exception ex) {
+                    Console.WriteLine("Webhook Email Error: " + ex.Message);
+                }
+            });
+
+
+
             // 6. Xoá lock
             _context.SeatLocks.RemoveRange(lockedSeats);
             await _context.SaveChangesAsync();
+
 
             // 7. Notify SignalR cho từng ghế
             foreach (var lockItem in lockedSeats)
