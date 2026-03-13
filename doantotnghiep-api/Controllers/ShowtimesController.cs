@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 namespace doantotnghiep_api.Controllers
 {
     [ApiController]
-    [Route("api/[controller]")]
+    [Route("api/showtimes")]
     public class ShowtimesController : ControllerBase
     {
         private readonly AppDbContext _context;
