@@ -1,4 +1,4 @@
-﻿using doantotnghiep_api.Data;
+using doantotnghiep_api.Data;
 using doantotnghiep_api.Dto_s;
 using doantotnghiep_api.Dtos;
 using doantotnghiep_api.Models;
@@ -350,10 +350,14 @@ namespace doantotnghiep_api.Controllers
                 .Select(b => b.SeatId)
                 .ToListAsync()).ToHashSet();
 
-            var locked = await _context.SeatLocks
+            var lockedList = await _context.SeatLocks
                 .AsNoTracking()
                 .Where(l => l.ShowtimeId == id && l.ExpiryTime > DateTime.UtcNow)
-                .ToDictionaryAsync(l => l.SeatId, l => l.UserId);
+                .ToListAsync();
+
+            var locked = lockedList
+                .GroupBy(l => l.SeatId)
+                .ToDictionary(g => g.Key, g => g.First().UserId);
 
             var result = seats
                 .GroupBy(s => s.RowNumber)
