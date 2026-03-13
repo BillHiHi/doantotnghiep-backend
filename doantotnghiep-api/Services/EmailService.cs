@@ -29,10 +29,16 @@ namespace doantotnghiep_api.Services
         {
             try
             {
+                if (string.IsNullOrEmpty(_settings.Username) || string.IsNullOrEmpty(_settings.Password))
+                {
+                    throw new Exception("Cấu hình SMTP trống (Username/Password)");
+                }
+
                 using var client = new SmtpClient(_settings.Server, _settings.Port)
                 {
                     Credentials = new NetworkCredential(_settings.Username, _settings.Password),
-                    EnableSsl = true
+                    EnableSsl = true,
+                    Timeout = 10000 // 10 giây
                 };
 
                 var mailMessage = new MailMessage
@@ -46,11 +52,16 @@ namespace doantotnghiep_api.Services
                 mailMessage.To.Add(toEmail);
 
                 await client.SendMailAsync(mailMessage);
-                Console.WriteLine($"✅ Email sent to {toEmail} successfully.");
+                Console.WriteLine($"[EMAIL] ✅ Gửi thành công tới: {toEmail}");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ Error sending email to {toEmail}: {ex.Message}");
+                Console.WriteLine($"[EMAIL] ❌ LỖI GỬI MAIL tới {toEmail}: {ex.Message}");
+                if (ex.InnerException != null)
+                {
+                    Console.WriteLine($"[EMAIL] Inner: {ex.InnerException.Message}");
+                }
+                throw; // Đưa lỗi ra ngoài để Controller bắt được
             }
         }
 

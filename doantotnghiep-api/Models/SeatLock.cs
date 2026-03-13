@@ -13,7 +13,9 @@ namespace doantotnghiep_api.Models
         public DateTime LockedAt { get; set; }
 
         public DateTime ExpiryTime { get; set; }
+
         public string? PaymentCode { get; set; }
+
         public decimal? TotalAmount { get; set; }
     }
 }

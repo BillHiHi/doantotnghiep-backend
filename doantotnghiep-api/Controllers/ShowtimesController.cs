@@ -333,55 +333,81 @@ namespace doantotnghiep_api.Controllers
         [AllowAnonymous]
         public async Task<IActionResult> GetSeats(int id)
         {
-            var showtime = await _context.Showtimes
-                .AsNoTracking()
+            try
+            {
+                // 1. Lấy thông tin suất chiếu (chỉ cần lấy ScreenId)
+                var showtime = await _context.Showtimes
+                    .AsNoTracking()
                     .Where(s => s.ShowtimeId == id)
                     .Select(s => new { s.ScreenId })
                     .FirstOrDefaultAsync();
 
-            if (showtime == null)
-                return NotFound();
+                if (showtime == null)
+                    return NotFound(new { detail = $"Không tìm thấy suất chiếu ID {id}" });
 
-            var seats = await _context.Seats
-                .AsNoTracking()
-                .Where(s => s.ScreenId == showtime.ScreenId)
-                .ToListAsync();
+                // 2. Lấy danh sách ghế của phòng này
+                var seats = await _context.Seats
+                    .AsNoTracking()
+                    .Where(s => s.ScreenId == showtime.ScreenId)
+                    .ToListAsync();
 
-            var booked = (await _context.Bookings
-                .AsNoTracking()
-                .Where(b => b.ShowtimeId == id && (b.Status == "Hoàn thành" || b.Status == "Paid"))
-                .Select(b => b.SeatId)
-                .ToListAsync()).ToHashSet();
-
-            // Sử dụng ToLookup thay vì ToDictionary để tránh lỗi 500 nếu lỡ có 2 bản ghi lock cho cùng 1 ghế
-            var lockedLookup = (await _context.SeatLocks
-                .AsNoTracking()
-                .Where(l => l.ShowtimeId == id && l.ExpiryTime > DateTime.UtcNow)
-                .ToListAsync())
-                .ToLookup(l => l.SeatId, l => l.UserId);
-
-            var result = seats
-                .OrderBy(s => s.RowNumber)
-                .ThenBy(s => s.SeatNumber)
-                .GroupBy(s => s.RowNumber)
-                .Select(g => new
+                if (seats == null || !seats.Any())
                 {
-                    Row = g.Key ?? "Unknown",
-                    Seats = g.Select(s => new
-                    {
-                        Id = s.SeatId,
-                        Code = $"{s.RowNumber}{s.SeatNumber}",
-                        Type = s.SeatType ?? "normal",
-                        Status =
-                            booked.Contains(s.SeatId) ? "booked" :
-                            lockedLookup.Contains(s.SeatId) ? "locked" :
-                            "available",
-                        LockerId = lockedLookup.Contains(s.SeatId) ? lockedLookup[s.SeatId].FirstOrDefault() : 0
-                    }).ToList()
-                })
-                .ToList();
+                    // Nếu không có ghế, trả về mảng rỗng thay vì để lỗi 500
+                    return Ok(new List<object>());
+                }
 
-            return Ok(result);
+                // 3. Lấy thông tin vé đã bán và ghế đang khóa
+                var bookedIds = await _context.Bookings
+                    .AsNoTracking()
+                    .Where(b => b.ShowtimeId == id && (b.Status == "Hoàn thành" || b.Status == "Paid"))
+                    .Select(b => b.SeatId)
+                    .ToListAsync();
+                var bookedSet = bookedIds.ToHashSet();
+
+                var lockedList = await _context.SeatLocks
+                    .AsNoTracking()
+                    .Where(l => l.ShowtimeId == id && l.ExpiryTime > DateTime.UtcNow)
+                    // ⭐ Chỉ lấy các cột chắc chắn có trong DB để tránh lỗi crash
+                    .Select(l => new { l.SeatId, l.UserId }) 
+                    .ToListAsync();
+                
+                var lockedLookup = lockedList.ToLookup(l => l.SeatId, l => l.UserId);
+
+                // 4. Nhóm ghế theo hàng và trả về
+                var result = seats
+                    .OrderBy(s => s.RowNumber ?? "Unknown")
+                    .ThenBy(s => s.SeatNumber)
+                    .GroupBy(s => s.RowNumber ?? "Unknown")
+                    .Select(g => new
+                    {
+                        Row = g.Key,
+                        Seats = g.Select(s => new
+                        {
+                            Id = s.SeatId,
+                            Code = $"{(s.RowNumber ?? "Unknown")}{s.SeatNumber}",
+                            Type = (s.SeatType ?? "Standard").ToLower(),
+                            Status =
+                                bookedSet.Contains(s.SeatId) ? "booked" :
+                                lockedLookup.Contains(s.SeatId) ? "locked" :
+                                "available",
+                            LockerId = lockedLookup.Contains(s.SeatId) ? lockedLookup[s.SeatId].FirstOrDefault() : 0
+                        }).ToList()
+                    })
+                    .ToList();
+
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                // Trả về thông báo lỗi cực kỳ chi tiết
+                return StatusCode(500, new { 
+                    error = "Lỗi nghiêm trọng khi load ghế", 
+                    detail = ex.Message,
+                    inner = ex.InnerException?.Message,
+                    stack = ex.StackTrace 
+                });
+            }
         }
 
         // =====================================================

@@ -47,7 +47,7 @@ namespace doantotnghiep_api.Controllers
 
             // 3. Tìm các ghế đang giữ với mã này
             var lockedSeats = await _context.SeatLocks
-                .Where(x => x.PaymentCode == paymentCode)
+                .Where(x => x.PaymentCode == paymentCode && x.ExpiryTime > DateTime.UtcNow)
                 .ToListAsync();
 
             if (!lockedSeats.Any())
@@ -86,6 +86,8 @@ namespace doantotnghiep_api.Controllers
                         var scopedContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                         var scopedEmailService = scope.ServiceProvider.GetRequiredService<IEmailService>();
 
+                        Console.WriteLine($"[WEBHOOK] 📧 Bắt đầu chuẩn bị email cho User ID: {firstLock.UserId}");
+
                         var user = await scopedContext.Users.FindAsync(firstLock.UserId);
                         var showtime = await scopedContext.Showtimes
                             .Include(s => s.Movie)
@@ -93,8 +95,13 @@ namespace doantotnghiep_api.Controllers
                                 .ThenInclude(sc => sc.Theater)
                             .FirstOrDefaultAsync(s => s.ShowtimeId == firstLock.ShowtimeId);
 
+                        if (user == null) Console.WriteLine("[WEBHOOK] ❌ Lỗi: Không tìm thấy thông tin User");
+                        if (showtime == null) Console.WriteLine("[WEBHOOK] ❌ Lỗi: Không tìm thấy thông tin Suất chiếu");
+
                         if (user != null && !string.IsNullOrEmpty(user.Email) && showtime != null)
                         {
+                            Console.WriteLine($"[WEBHOOK] 📤 Đang gửi mail tới: {user.Email}...");
+                            
                             var movie = showtime.Movie;
                             var posterUrl = movie?.PosterUrl;
                             if (!string.IsNullOrEmpty(posterUrl) && !posterUrl.StartsWith("http")) {
@@ -119,10 +126,16 @@ namespace doantotnghiep_api.Controllers
                                 totalAmountPaid,
                                 seatNames
                             );
+                            Console.WriteLine("[WEBHOOK] ✅ Hoàn tất gọi hàm gửi email.");
+                        }
+                        else
+                        {
+                            Console.WriteLine("[WEBHOOK] ⚠️ Bỏ qua gửi email do thiếu thông tin (Email/Showtime/User)");
                         }
                     }
                 } catch (Exception ex) {
-                    Console.WriteLine("Webhook Email Error: " + ex.Message);
+                    Console.WriteLine("[WEBHOOK] ❌ LỖI NGHIÊM TRỌNG TRONG TASK GỬI MAIL: " + ex.Message);
+                    if (ex.InnerException != null) Console.WriteLine("Inner: " + ex.InnerException.Message);
                 }
             });
 
