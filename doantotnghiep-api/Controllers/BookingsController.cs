@@ -346,5 +346,124 @@ namespace doantotnghiep_api.Controllers
                 return StatusCode(500, ex.ToString());
             }
         }
+        // =============================================
+        // CONFIRM ALL PAYMENT (BULK)
+        // =============================================
+        [HttpPost("confirm-all-payment")]
+        public async Task<IActionResult> ConfirmAllPayment([FromBody] ConfirmAllRequest request)
+        {
+            try
+            {
+                if (request == null || string.IsNullOrEmpty(request.PaymentCode))
+                    return BadRequest("Thiếu thông tin xác nhận");
+
+                var now = DateTime.UtcNow;
+
+                // 1. Tìm các ghế đang giữ với mã này
+                var lockedSeats = await _context.SeatLocks
+                    .Where(x => x.PaymentCode == request.PaymentCode && x.UserId == request.UserId && x.ShowtimeId == request.ShowtimeId)
+                    .ToListAsync();
+
+                if (!lockedSeats.Any())
+                {
+                    // Kiểm tra xem đã có booking chưa (Trường hợp nhấn 2 lần)
+                    var hasBooking = await _context.Bookings.AnyAsync(x =>
+                        x.UserId == request.UserId &&
+                        x.ShowtimeId == request.ShowtimeId &&
+                        x.Status == "Paid");
+
+                    if (hasBooking) return Ok("Thanh toán thành công (đã xác nhận trước đó)");
+
+                    return BadRequest("Không tìm thấy thông tin giữ ghế hoặc mã thanh toán không đúng");
+                }
+
+                // 2. Chuyển từ SeatLock sang Bookings
+                foreach (var lockItem in lockedSeats)
+                {
+                    var booking = new Bookings
+                    {
+                        UserId = lockItem.UserId,
+                        ShowtimeId = lockItem.ShowtimeId,
+                        SeatId = lockItem.SeatId,
+                        BookingDate = now,
+                        Status = "Paid",
+                        TotalAmount = lockItem.TotalAmount ?? 0
+                    };
+                    _context.Bookings.Add(booking);
+                }
+
+                // 3. Xoá lock
+                _context.SeatLocks.RemoveRange(lockedSeats);
+                await _context.SaveChangesAsync();
+
+                // 4. GỬI EMAIL XÁC NHẬN (logic giống bên webhook)
+                var seatIds = lockedSeats.Select(s => s.SeatId).ToList();
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        using (var scope = _serviceProvider.CreateScope())
+                        {
+                            var scopedContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                            var scopedEmailService = scope.ServiceProvider.GetRequiredService<IEmailService>();
+
+                            var user = await scopedContext.Users.FindAsync(request.UserId);
+                            var showtime = await scopedContext.Showtimes
+                                .Include(s => s.Movie)
+                                .Include(s => s.Screen)
+                                    .ThenInclude(sc => sc.Theater)
+                                .FirstOrDefaultAsync(s => s.ShowtimeId == request.ShowtimeId);
+
+                            if (user != null && !string.IsNullOrEmpty(user.Email) && showtime != null)
+                            {
+                                var movie = showtime.Movie;
+                                var posterUrl = movie?.PosterUrl;
+                                if (!string.IsNullOrEmpty(posterUrl) && !posterUrl.StartsWith("http"))
+                                {
+                                    posterUrl = "https://doantotnghiep-backend-whqz.onrender.com/" + posterUrl.Replace("wwwroot/", "").TrimStart('/');
+                                }
+
+                                var seats = await scopedContext.Seats.Where(s => seatIds.Contains(s.SeatId)).ToListAsync();
+                                string seatNames = string.Join(", ", seats.Select(s => $"{s.RowNumber}{s.SeatNumber}"));
+                                decimal totalAmountPaid = lockedSeats.Sum(s => s.TotalAmount ?? 0);
+
+                                await scopedEmailService.SendTicketEmailAsync(
+                                    user.Email,
+                                    user.FullName ?? "Khách hàng",
+                                    user.PhoneNumber ?? "N/A",
+                                    movie?.Title ?? "Phim",
+                                    posterUrl ?? "",
+                                    showtime.Screen?.Theater?.Name ?? "Rạp phim",
+                                    showtime.Screen?.Theater?.Address ?? "",
+                                    showtime.StartTime,
+                                    DateTime.Now,
+                                    request.PaymentCode.ToUpper(),
+                                    totalAmountPaid,
+                                    seatNames
+                                );
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("Manual confirm Email Error: " + ex.Message);
+                    }
+                });
+
+                // 5. Notify SignalR cho từng ghế
+                foreach (var seatId in seatIds)
+                {
+                    await _hub.Clients
+                        .Group($"Showtime_{request.ShowtimeId}")
+                        .SendAsync("ReceiveSeatStatus", seatId, "Locked", -1);
+                }
+
+                return Ok("Thanh toán thành công");
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, ex.ToString());
+            }
+        }
     }
 }
