@@ -265,7 +265,9 @@ namespace doantotnghiep_api.Controllers
                     SeatId = request.SeatId,
                     BookingDate = now,
                     Status = "Paid",
-                    TotalAmount = lockSeat.TotalAmount ?? 0
+                    TotalAmount = lockSeat.TotalAmount ?? 0,
+                    PaymentCode = lockSeat.PaymentCode,
+                    Combos = lockSeat.Combos
                 };
 
                 _context.Bookings.Add(booking);
@@ -396,7 +398,9 @@ namespace doantotnghiep_api.Controllers
                         SeatId = lockItem.SeatId,
                         BookingDate = now,
                         Status = "Paid",
-                        TotalAmount = lockItem.TotalAmount ?? 0
+                        TotalAmount = lockItem.TotalAmount ?? 0,
+                        PaymentCode = lockItem.PaymentCode,
+                        Combos = lockItem.Combos
                     };
                     _context.Bookings.Add(booking);
                 }
@@ -492,6 +496,149 @@ namespace doantotnghiep_api.Controllers
                 }
 
                 return Ok("Thanh toán thành công");
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, ex.ToString());
+            }
+        }
+
+        // =============================================
+        // SCAN TICKET BY PAYMENT CODE
+        // =============================================
+        [HttpGet("scan/{paymentCode}")]
+        public async Task<IActionResult> ScanTicket(string paymentCode)
+        {
+            try
+            {
+                var bookings = await _context.Bookings
+                    .Include(b => b.Seat)
+                    .Where(b => b.PaymentCode == paymentCode)
+                    .ToListAsync();
+
+                if (!bookings.Any())
+                    return NotFound(new { message = $"Không tìm thấy đơn hàng với mã {paymentCode}" });
+
+                var firstBooking = bookings.First();
+                var user = await _context.Users.FindAsync(firstBooking.UserId);
+                var showtime = await _context.Showtimes
+                    .Include(s => s.Movie)
+                    .Include(s => s.Screen)
+                        .ThenInclude(sc => sc.Theater)
+                    .FirstOrDefaultAsync(s => s.ShowtimeId == firstBooking.ShowtimeId);
+
+                string seatNames = string.Join(", ", bookings.Select(s => $"{s.Seat.RowNumber}{s.Seat.SeatNumber}"));
+                decimal totalAmount = bookings.Sum(b => b.TotalAmount) / bookings.Count(); // Wait, TotalAmount in Booking is usually total per lock
+
+                // Giả sử TotalAmount lưu đúng (nếu mỗi booking lưu tổng tiền, ta lấy của cái đầu)
+                totalAmount = firstBooking.TotalAmount;
+
+                var movie = showtime?.Movie;
+                var posterUrl = movie?.PosterUrl;
+                var baseUrl = _configuration["AppBaseUrl"] ?? "http://localhost:5066";
+                if (!string.IsNullOrEmpty(posterUrl) && !posterUrl.StartsWith("http"))
+                {
+                    posterUrl = baseUrl.TrimEnd('/') + "/" + posterUrl.Replace("wwwroot/", "").TrimStart('/');
+                }
+
+                return Ok(new
+                {
+                    code = paymentCode,
+                    customerName = user?.FullName ?? "Khách hàng",
+                    customerPhone = user?.PhoneNumber ?? "",
+                    movie = movie?.Title ?? "Phim",
+                    poster = posterUrl ?? "",
+                    date = showtime?.StartTime.ToString("dd/MM/yyyy"),
+                    time = showtime?.StartTime.ToString("HH:mm"),
+                    theater = showtime?.Screen?.Theater?.Name ?? "Rạp phim",
+                    screen = showtime?.Screen?.ScreenName ?? "Phòng chiếu",
+                    seats = seatNames,
+                    total = totalAmount,
+                    status = firstBooking.Status == "Paid" ? "PAID" : (firstBooking.Status == "Collected" ? "COLLECTED" : firstBooking.Status)
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, ex.ToString());
+            }
+        }
+
+        // =============================================
+        // GET RECENT TICKETS (Lịch sử giao dịch)
+        // =============================================
+        [HttpGet("recent")]
+        public async Task<IActionResult> GetRecentTickets()
+        {
+            try
+            {
+                // Lấy các payment code mới nhất (những booking thành công)
+                var recentCodes = await _context.Bookings
+                    .Where(b => b.PaymentCode != null)
+                    .OrderByDescending(b => b.BookingDate)
+                    .Select(b => b.PaymentCode)
+                    .Distinct()
+                    .Take(10)
+                    .ToListAsync();
+
+                var results = new List<object>();
+
+                foreach (var code in recentCodes)
+                {
+                    var bookings = await _context.Bookings
+                        .Include(b => b.Seat)
+                        .Where(b => b.PaymentCode == code)
+                        .ToListAsync();
+
+                    if (bookings.Any())
+                    {
+                        var firstBooking = bookings.First();
+                        var user = await _context.Users.FindAsync(firstBooking.UserId);
+                        var showtime = await _context.Showtimes
+                            .Include(s => s.Movie)
+                            .FirstOrDefaultAsync(s => s.ShowtimeId == firstBooking.ShowtimeId);
+
+                        results.Add(new
+                        {
+                            code = code,
+                            customerName = user?.FullName ?? "Khách hàng",
+                            movie = showtime?.Movie?.Title ?? "Phim",
+                            time = showtime?.StartTime.ToString("HH:mm"),
+                            status = firstBooking.Status == "Paid" ? "PAID" : (firstBooking.Status == "Collected" ? "COLLECTED" : firstBooking.Status)
+                        });
+                    }
+                }
+
+                return Ok(results);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, ex.ToString());
+            }
+        }
+
+        // =============================================
+        // COLLECT TICKET (Phát vé)
+        // =============================================
+        [HttpPost("collect/{paymentCode}")]
+        public async Task<IActionResult> CollectTicket(string paymentCode)
+        {
+            try
+            {
+                var bookings = await _context.Bookings
+                    .Where(b => b.PaymentCode == paymentCode)
+                    .ToListAsync();
+
+                if (!bookings.Any())
+                    return NotFound("Không tìm thấy đơn hàng");
+
+                foreach (var booking in bookings)
+                {
+                    booking.Status = "Collected";
+                }
+
+                await _context.SaveChangesAsync();
+
+                return Ok(new { success = true, message = "Phát vé bộ phận thành công" });
             }
             catch (Exception ex)
             {

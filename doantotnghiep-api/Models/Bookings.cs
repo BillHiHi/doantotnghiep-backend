@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 
 namespace doantotnghiep_api.Models
 {
@@ -13,5 +13,7 @@ namespace doantotnghiep_api.Models
         public DateTime BookingDate { get; set; }
         public decimal TotalAmount { get; set; }
         public string Status { get; set; } = "Hoàn thành";
+        public string? PaymentCode { get; set; }
+        public string? Combos { get; set; }
     }
 }

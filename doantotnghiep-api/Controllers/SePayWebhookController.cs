@@ -72,7 +72,9 @@ namespace doantotnghiep_api.Controllers
                     SeatId = lockItem.SeatId,
                     BookingDate = now,
                     Status = "Paid",
-                    TotalAmount = lockItem.TotalAmount ?? 0 
+                    TotalAmount = lockItem.TotalAmount ?? 0,
+                    PaymentCode = lockItem.PaymentCode,
+                    Combos = lockItem.Combos
                 };
                 _context.Bookings.Add(booking);
             }
