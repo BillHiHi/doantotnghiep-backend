@@ -1,4 +1,4 @@
-﻿namespace doantotnghiep_api.Dto_s
+namespace doantotnghiep_api.Dto_s
 {
     public class PaymentRequestDto
     {
@@ -6,6 +6,7 @@
         public int ShowtimeId { get; set; }
         public List<int> SeatIds { get; set; } = new();
         public decimal TotalAmount { get; set; }
+        public string? Combos { get; set; } // JSON bắp nước
     }
 
     public class PaymentResultDto

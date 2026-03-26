@@ -238,8 +238,26 @@ using (var scope = app.Services.CreateScope())
                 ""IsPublished"" BOOLEAN NOT NULL,
                 ""CreatedAt"" TIMESTAMP WITH TIME ZONE NOT NULL
             );
+
+            -- Thêm cột thiếu cho bảng SeatLocks (Postgres mặc định chữ thường trong catalog)
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE lower(table_name)='seatlocks' AND lower(column_name)='paymentcode') THEN
+                    ALTER TABLE ""SeatLocks"" ADD COLUMN ""PaymentCode"" TEXT;
+                END IF;
+
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE lower(table_name)='seatlocks' AND lower(column_name)='totalamount') THEN
+                    ALTER TABLE ""SeatLocks"" ADD COLUMN ""TotalAmount"" DECIMAL(18,2);
+                END IF;
+
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE lower(table_name)='seatlocks' AND lower(column_name)='combos') THEN
+                    ALTER TABLE ""SeatLocks"" ADD COLUMN ""Combos"" TEXT;
+                END IF;
+            END $$;
         ");
-    } catch { }
+    } catch (Exception ex) { 
+        Console.WriteLine("DB Auto-Fix Error: " + ex.Message);
+    }
 }
 
 app.Run();

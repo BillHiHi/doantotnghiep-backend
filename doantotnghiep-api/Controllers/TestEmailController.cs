@@ -30,11 +30,13 @@ namespace doantotnghiep_api.Controllers
                     "https://m.media-amazon.com/images/M/MV5BMTc5MDE2ODcwNV5BMl5BanBnXkFtZTgwMzI2NzQ2NzM@._V1_.jpg",
                     "Cinema Star Center - Quận 1",
                     "123 Lê Lợi, Phường Bến Thành, Quận 1, TP.HCM",
+                    "P01 - Digital 2D", // screenName
                     DateTime.Now.AddHours(2),
                     DateTime.Now,
                     "RF99HD88",
                     150000,
-                    "H12, H13"
+                    "H12, H13",
+                    "2x Combo Bắp Nước, 1x Coca-Cola" // comboDetails
                 );
 
 
