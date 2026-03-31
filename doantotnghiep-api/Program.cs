@@ -27,7 +27,11 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
     ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
 
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(connectionString));
+    options.UseNpgsql(connectionString, npgsqlOptionsAction: npgsqlOptions =>
+    {
+        // Vô hiệu hóa Prepared Statements (tương thích tốt nhất với Pgbouncer/Supabase Pooler)
+        npgsqlOptions.UseRelationalNulls(true);
+    }));
 
 
 // ========================================
