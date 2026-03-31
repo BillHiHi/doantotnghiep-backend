@@ -14,15 +14,19 @@ namespace doantotnghiep_api.Services
         public string SenderEmail { get; set; } = string.Empty;
         public string Username { get; set; } = string.Empty;
         public string Password { get; set; } = string.Empty;
+        public string? AppBaseUrl { get; set; }
     }
 
     public class EmailService : IEmailService
     {
         private readonly SmtpSettings _settings;
+        private readonly IConfiguration _configuration;
 
         public EmailService(IConfiguration configuration)
         {
+            _configuration = configuration;
             _settings = configuration.GetSection("SmtpSettings").Get<SmtpSettings>() ?? new SmtpSettings();
+            if (string.IsNullOrEmpty(_settings.AppBaseUrl)) _settings.AppBaseUrl = configuration["AppBaseUrl"];
         }
 
         public async Task SendEmailAsync(string toEmail, string subject, string body)
@@ -69,8 +73,18 @@ namespace doantotnghiep_api.Services
         {
             var qrUrl = $"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={paymentCode}";
             var subject = $"Vé Cinema: {movieTitle} - {paymentCode}";
+            var baseUrl = _settings.AppBaseUrl ?? _configuration["AppBaseUrl"] ?? "https://doantotnghiep-backend-whqz.onrender.com"; 
             
-            if (string.IsNullOrEmpty(posterUrl)) posterUrl = "https://placehold.co/300x450?text=No+Poster";
+            if (string.IsNullOrEmpty(posterUrl)) 
+                posterUrl = "https://placehold.co/300x450?text=No+Poster";
+            else if (!posterUrl.StartsWith("http"))
+            {
+                // Clean path like what we did on frontend
+                var cleanPath = posterUrl.Replace("wwwroot/", "").Replace("uploads/", "").TrimStart('/').Replace(" ", "%20");
+                posterUrl = $"{baseUrl.TrimEnd('/')}/uploads/{cleanPath}";
+            }
+            
+            Console.WriteLine($"[EMAIL] 🎞️ Poster URL: {posterUrl}");
 
             var body = $@"
 <div style='background-color:#f8fafc; padding:30px; font-family:""Segoe UI"", Tahoma, Geneva, Verdana, sans-serif; color:#1e293b; line-height:1.5;'>

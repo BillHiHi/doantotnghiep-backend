@@ -311,6 +311,7 @@ namespace doantotnghiep_api.Controllers
 
                                     var movie = showtime.Movie;
                                     var posterUrl = movie?.PosterUrl;
+                                  
 
                                     await scopedEmailService.SendTicketEmailAsync(
                                         user.Email,
@@ -425,13 +426,6 @@ namespace doantotnghiep_api.Controllers
                             {
                                 var movie = showtime.Movie;
                                 var posterUrl = movie?.PosterUrl;
-                                    var scopedConfig = scope.ServiceProvider.GetRequiredService<IConfiguration>();
-                                    var baseUrl = scopedConfig["AppBaseUrl"] ?? "http://localhost:5066";
-
-                                    if (!string.IsNullOrEmpty(posterUrl) && !posterUrl.StartsWith("http"))
-                                    {
-                                        posterUrl = baseUrl.TrimEnd('/') + "/" + posterUrl.Replace("wwwroot/", "").TrimStart('/');
-                                    }
 
                                 var seats = await scopedContext.Seats.Where(s => seatIds.Contains(s.SeatId)).ToListAsync();
                                 string seatNames = string.Join(", ", seats.Select(s => $"{s.RowNumber}{s.SeatNumber}"));
@@ -529,11 +523,8 @@ namespace doantotnghiep_api.Controllers
 
                 var movie = showtime?.Movie;
                 var posterUrl = movie?.PosterUrl;
-                var baseUrl = _configuration["AppBaseUrl"] ?? "http://localhost:5066";
-                if (!string.IsNullOrEmpty(posterUrl) && !posterUrl.StartsWith("http"))
-                {
-                    posterUrl = baseUrl.TrimEnd('/') + "/" + posterUrl.Replace("wwwroot/", "").TrimStart('/');
-                }
+                
+                
 
                 return Ok(new
                 {
