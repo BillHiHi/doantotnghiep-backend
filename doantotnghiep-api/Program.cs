@@ -3,40 +3,26 @@ using System.Text;
 using doantotnghiep_api.Data;
 using doantotnghiep_api.Hubs;
 using doantotnghiep_api.Models;
+using doantotnghiep_api.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
-using Npgsql;
-
-using doantotnghiep_api.Services;
 
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ================= Swagger + Registration =================
-builder.Services.AddScoped<IEmailService, EmailService>();
-builder.Services.AddHostedService<doantotnghiep_api.Services.MovieStatusUpdateService>();
-
-
-// ========================================
-// DATABASE CONFIG (Tối ưu kết nối Supabase)
-// ========================================
+// ================= DATABASE =================
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
-    ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+    ?? throw new InvalidOperationException("Missing DB connection");
 
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(connectionString, npgsqlOptionsAction: npgsqlOptions =>
-    {
-        // Vô hiệu hóa Prepared Statements (tương thích tốt nhất với Pgbouncer/Supabase Pooler)
-        npgsqlOptions.UseRelationalNulls(true);
-    }));
+    options.UseNpgsql(connectionString));
 
-
-// ========================================
-// SERVICES
-// ========================================
+// ================= SERVICES =================
+builder.Services.AddScoped<IEmailService, EmailService>();
+builder.Services.AddHostedService<MovieStatusUpdateService>();
 
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
@@ -47,8 +33,7 @@ builder.Services.AddControllers()
 
 builder.Services.AddEndpointsApiExplorer();
 
-
-// ================= Swagger + JWT =================
+// ================= SWAGGER =================
 builder.Services.AddSwaggerGen(options =>
 {
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
@@ -58,7 +43,7 @@ builder.Services.AddSwaggerGen(options =>
         Scheme = "bearer",
         BearerFormat = "JWT",
         In = ParameterLocation.Header,
-        Description = "Nhập: Bearer {your token}"
+        Description = "Bearer {token}"
     });
 
     options.AddSecurityRequirement(new OpenApiSecurityRequirement
@@ -77,25 +62,19 @@ builder.Services.AddSwaggerGen(options =>
     });
 });
 
-
-// ================= CORS (ĐÃ FIX CHUẨN) =================
+// ================= CORS =================
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
     {
-        policy.WithOrigins(
-                "http://localhost:5173",  // Môi trường dev (Vite)
-                "http://127.0.0.1:5173",
-                "https://ten-du-an.vercel.app" // ĐỔI THÀNH LINK VERCEL SAU NÀY CỦA BẠN
-            )
+        policy
+            .AllowAnyOrigin() // 🚀 Cho deploy nhanh (sau này có thể siết lại)
             .AllowAnyHeader()
-            .AllowAnyMethod()
-            .AllowCredentials(); // Cần thiết cho JWT Token / SignalR
+            .AllowAnyMethod();
     });
 });
 
-
-// ================= JWT Authentication =================
+// ================= JWT =================
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -105,31 +84,26 @@ builder.Services
             ValidateIssuer = true,
             ValidateAudience = true,
             ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
 
+            ValidateIssuerSigningKey = true,
             ValidIssuer = builder.Configuration["Jwt:Issuer"],
             ValidAudience = builder.Configuration["Jwt:Audience"],
 
             IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"] ?? throw new InvalidOperationException("JWT Key is missing"))
+                Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!)
             )
         };
     });
 
 builder.Services.AddAuthorization();
 
-
-// ================= SignalR =================
+// ================= SIGNALR =================
 builder.Services.AddSignalR();
 
-
-
-// ========================================
-// APP PIPELINE (THỨ TỰ CỰC KỲ QUAN TRỌNG)
-// ========================================
-
+// ================= BUILD APP =================
 var app = builder.Build();
 
+// ================= MIDDLEWARE =================
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -138,105 +112,18 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-app.UseStaticFiles(new StaticFileOptions
-{
-    ContentTypeProvider = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider
-    {
-        Mappings = { [".avif"] = "image/avif" }
-    }
-});
-
 app.UseRouting();
 
-// CORS PHẢI NẰM Ở ĐÂY: Dưới UseRouting và Trước UseAuthentication
-app.UseCors("AllowFrontend");
+app.UseCors("AllowFrontend"); // 🔥 QUAN TRỌNG
 
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
-app.MapHub<BookingHub>("/Bookings");
+app.MapHub<BookingHub>("/bookings");
 
+// ================= HEALTH CHECK =================
+app.MapGet("/", () => "API is running... 🚀");
 
-
-// ========================================
-// AUTO MIGRATE + SEED ADMIN + DB FIX
-// ========================================
-
-using (var scope = app.Services.CreateScope())
-{
-    var services = scope.ServiceProvider;
-    var context = services.GetRequiredService<AppDbContext>();
-    var logger = services.GetRequiredService<ILogger<Program>>();
-
-    try
-    {
-        logger.LogInformation("⏳ Đang kiểm tra và cập nhật Database...");
-
-        // 1. Tự động chạy các bản Migration của EF Core
-        await context.Database.MigrateAsync();
-
-        // 2. Khởi tạo tài khoản Admin nếu chưa có
-        if (!await context.Users.AnyAsync(x => x.Role == "Admin"))
-        {
-            string Hash(string password)
-            {
-                using var sha = SHA256.Create();
-                return Convert.ToBase64String(
-                    sha.ComputeHash(Encoding.UTF8.GetBytes(password))
-                );
-            }
-
-            context.Users.Add(new User
-            {
-                Email = "admin@cinema.com",
-                PasswordHash = Hash("123456"),
-                FullName = "System Admin",
-                PhoneNumber = "",
-                Role = "Admin",
-                CreatedAt = DateTime.UtcNow
-            });
-
-            await context.SaveChangesAsync();
-            logger.LogInformation("🔥 Đã tạo tài khoản Admin mặc định: admin@cinema.com / 123456");
-        }
-
-        // 3. Tự động chạy script SQL fix bảng/cột bị thiếu
-        await context.Database.ExecuteSqlRawAsync(@"
-            CREATE TABLE IF NOT EXISTS ""Promotions"" (
-                ""PromotionId"" SERIAL PRIMARY KEY,
-                ""Title"" VARCHAR(200) NOT NULL,
-                ""Summary"" TEXT,
-                ""Content"" TEXT,
-                ""ImageUrl"" TEXT,
-                ""StartDate"" TIMESTAMP WITH TIME ZONE NOT NULL,
-                ""EndDate"" TIMESTAMP WITH TIME ZONE NOT NULL,
-                ""IsPublished"" BOOLEAN NOT NULL,
-                ""CreatedAt"" TIMESTAMP WITH TIME ZONE NOT NULL
-            );
-
-            DO $$ 
-            BEGIN 
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE lower(table_name)='seatlocks' AND lower(column_name)='paymentcode') THEN
-                    ALTER TABLE ""SeatLocks"" ADD COLUMN ""PaymentCode"" TEXT;
-                END IF;
-
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE lower(table_name)='seatlocks' AND lower(column_name)='totalamount') THEN
-                    ALTER TABLE ""SeatLocks"" ADD COLUMN ""TotalAmount"" DECIMAL(18,2);
-                END IF;
-
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE lower(table_name)='seatlocks' AND lower(column_name)='combos') THEN
-                    ALTER TABLE ""SeatLocks"" ADD COLUMN ""Combos"" TEXT;
-                END IF;
-            END $$;
-        ");
-
-        logger.LogInformation("✅ Database khởi tạo và cập nhật thành công.");
-    }
-    catch (Exception ex)
-    {
-        logger.LogError(ex, "❌ Có lỗi xảy ra trong quá trình khởi tạo Database.");
-    }
-}
-
+// ================= RUN =================
 app.Run();
