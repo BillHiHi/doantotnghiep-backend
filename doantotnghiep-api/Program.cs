@@ -149,7 +149,7 @@ app.UseStaticFiles(new StaticFileOptions
 app.UseRouting();
 
 // CORS PHẢI NẰM Ở ĐÂY: Dưới UseRouting và Trước UseAuthentication
-app.UseCors("AllowFrontend");
+app.UseCors("AllowVueApp");
 
 app.UseAuthentication();
 app.UseAuthorization();
