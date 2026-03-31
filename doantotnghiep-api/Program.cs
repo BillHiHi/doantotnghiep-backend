@@ -22,8 +22,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 // ================= SERVICES =================
 builder.Services.AddScoped<IEmailService, EmailService>();
-builder.Services.AddHostedService<MovieStatusUpdateService>();
-
+// builder.Services.AddHostedService<MovieStatusUpdateService>();
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
