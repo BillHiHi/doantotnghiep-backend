@@ -17,42 +17,17 @@ var builder = WebApplication.CreateBuilder(args);
 
 // ================= Swagger + Registration =================
 builder.Services.AddScoped<IEmailService, EmailService>();
+builder.Services.AddHostedService<doantotnghiep_api.Services.MovieStatusUpdateService>();
 
 
 // ========================================
-// DATABASE CONFIG (Railway + Local)
+// DATABASE CONFIG (Tối ưu kết nối Supabase)
 // ========================================
-
-var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
-
-string connectionString;
-
-if (!string.IsNullOrEmpty(databaseUrl))
-{
-    var uri = new Uri(databaseUrl);
-    var userInfo = uri.UserInfo.Split(':');
-
-    var dbBuilder = new NpgsqlConnectionStringBuilder
-    {
-        Host = uri.Host,
-        Port = uri.Port,
-        Username = userInfo[0],
-        Password = userInfo[1],
-        Database = uri.AbsolutePath.Trim('/'),
-        SslMode = SslMode.Require,
-        TrustServerCertificate = true
-    };
-
-    connectionString = dbBuilder.ToString();
-}
-else
-{
-    connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
-}
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
+    ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(connectionString));
-
 
 
 // ========================================
@@ -93,7 +68,7 @@ builder.Services.AddSwaggerGen(options =>
                     Id = "Bearer"
                 }
             },
-            new string[] {}
+            Array.Empty<string>()
         }
     });
 });
@@ -104,11 +79,11 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
     {
-        policy.SetIsOriginAllowed(origin => 
-            {
-                var uri = new Uri(origin);
-                return uri.Host == "localhost" || uri.Host == "127.0.0.1" || uri.Host.EndsWith("vercel.app");
-            })
+        policy.SetIsOriginAllowed(origin =>
+        {
+            var uri = new Uri(origin);
+            return uri.Host == "localhost" || uri.Host == "127.0.0.1" || uri.Host.EndsWith("vercel.app");
+        })
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials();
@@ -132,7 +107,7 @@ builder.Services
             ValidAudience = builder.Configuration["Jwt:Audience"],
 
             IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"])
+                Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"] ?? throw new InvalidOperationException("JWT Key is missing"))
             )
         };
     });
@@ -179,53 +154,48 @@ app.MapHub<BookingHub>("/Bookings");
 
 
 // ========================================
-// AUTO MIGRATE + SEED ADMIN
+// AUTO MIGRATE + SEED ADMIN + DB FIX
 // ========================================
 
 using (var scope = app.Services.CreateScope())
 {
-    var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
-    context.Database.Migrate();
-
-    if (!context.Users.Any(x => x.Role == "Admin"))
-    {
-        string Hash(string password)
-        {
-            using var sha = SHA256.Create();
-            return Convert.ToBase64String(
-                sha.ComputeHash(Encoding.UTF8.GetBytes(password))
-            );
-        }
-
-        context.Users.Add(new User
-        {
-            Email = "admin@cinema.com",
-            PasswordHash = Hash("123456"),
-            FullName = "System Admin",
-            PhoneNumber = "",
-            Role = "Admin",
-            CreatedAt = DateTime.UtcNow
-        });
-
-        context.SaveChanges(); 
-
-        Console.WriteLine("🔥 Admin created:");
-        Console.WriteLine("Email: admin@cinema.com");
-        Console.WriteLine("Password: 123456");
-    }
-}
-
-// Tự động kiểm tra và tạo bảng nếu thiếu (Sửa lỗi relation does not exist)
-using (var scope = app.Services.CreateScope())
-{
     var services = scope.ServiceProvider;
     var context = services.GetRequiredService<AppDbContext>();
-    // context.Database.Migrate(); // Bạn có thể dùng lệnh này nếu muốn chạy tất cả migration
-    
-    // Hoặc ép tạo bảng bằng SQL script nếu table chưa tồn tại
-    var conn = context.Database.GetDbConnection();
-    try {
+    var logger = services.GetRequiredService<ILogger<Program>>();
+
+    try
+    {
+        logger.LogInformation("⏳ Đang kiểm tra và cập nhật Database...");
+
+        // 1. Tự động chạy các bản Migration của EF Core
+        await context.Database.MigrateAsync();
+
+        // 2. Khởi tạo tài khoản Admin nếu chưa có
+        if (!await context.Users.AnyAsync(x => x.Role == "Admin"))
+        {
+            string Hash(string password)
+            {
+                using var sha = SHA256.Create();
+                return Convert.ToBase64String(
+                    sha.ComputeHash(Encoding.UTF8.GetBytes(password))
+                );
+            }
+
+            context.Users.Add(new User
+            {
+                Email = "admin@cinema.com",
+                PasswordHash = Hash("123456"),
+                FullName = "System Admin",
+                PhoneNumber = "",
+                Role = "Admin",
+                CreatedAt = DateTime.UtcNow
+            });
+
+            await context.SaveChangesAsync();
+            logger.LogInformation("🔥 Đã tạo tài khoản Admin mặc định: admin@cinema.com / 123456");
+        }
+
+        // 3. Tự động chạy script SQL fix bảng/cột bị thiếu
         await context.Database.ExecuteSqlRawAsync(@"
             CREATE TABLE IF NOT EXISTS ""Promotions"" (
                 ""PromotionId"" SERIAL PRIMARY KEY,
@@ -239,7 +209,6 @@ using (var scope = app.Services.CreateScope())
                 ""CreatedAt"" TIMESTAMP WITH TIME ZONE NOT NULL
             );
 
-            -- Thêm cột thiếu cho bảng SeatLocks (Postgres mặc định chữ thường trong catalog)
             DO $$ 
             BEGIN 
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE lower(table_name)='seatlocks' AND lower(column_name)='paymentcode') THEN
@@ -255,8 +224,12 @@ using (var scope = app.Services.CreateScope())
                 END IF;
             END $$;
         ");
-    } catch (Exception ex) { 
-        Console.WriteLine("DB Auto-Fix Error: " + ex.Message);
+
+        logger.LogInformation("✅ Database khởi tạo và cập nhật thành công.");
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "❌ Có lỗi xảy ra trong quá trình khởi tạo Database.");
     }
 }
 

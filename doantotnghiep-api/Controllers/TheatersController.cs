@@ -36,6 +36,22 @@ namespace doantotnghiep_api.Controllers
         }
 
         // =========================
+        // Lấy danh sách thành phố (API MỚI)
+        // =========================
+        [HttpGet("cities")]
+        [AllowAnonymous]
+        public async Task<IActionResult> GetCities()
+        {
+            var cities = await _context.Theaters
+                .Where(t => !string.IsNullOrEmpty(t.City)) // Loại bỏ những rạp lỡ quên chưa nhập thành phố
+                .Select(t => t.City)
+                .Distinct()
+                .ToListAsync();
+
+            return Ok(cities);
+        }
+
+        // =========================
         // Thêm rạp mới
         // =========================
         [HttpPost]
@@ -100,7 +116,8 @@ namespace doantotnghiep_api.Controllers
         public async Task<IActionResult> GetMoviesByTheater(int theaterId)
         {
             var movies = await _context.Showtimes
-                .Where(s => s.Screen.TheaterId == theaterId)
+                // Thêm s.StartTime >= DateTime.Now để không hiển thị phim của ngày hôm qua
+                .Where(s => s.Screen.TheaterId == theaterId && s.StartTime >= DateTime.Now)
                 .Include(s => s.Movie)
                 .Select(s => s.Movie)
                 .Distinct()

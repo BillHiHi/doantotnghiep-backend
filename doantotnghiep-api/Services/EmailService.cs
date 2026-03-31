@@ -69,25 +69,35 @@ namespace doantotnghiep_api.Services
         {
             var qrUrl = $"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={paymentCode}";
             var subject = $"Vé Cinema: {movieTitle} - {paymentCode}";
-            
-            if (string.IsNullOrEmpty(posterUrl)) posterUrl = "https://placehold.co/300x450?text=No+Poster";
+
+            // ==========================================
+            // FIX LỖI POSTER EMAIL: XỬ LÝ ABSOLUTE URL
+            // ==========================================
+            string baseUrl = "https://localhost:7081";
+
+            if (string.IsNullOrEmpty(posterUrl))
+            {
+                posterUrl = "https://placehold.co/300x450?text=No+Poster";
+            }
+            else if (!posterUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+            {
+                posterUrl = baseUrl.TrimEnd('/') + "/" + posterUrl.TrimStart('/');
+            }
+            // ==========================================
 
             var body = $@"
 <div style='background-color:#f8fafc; padding:30px; font-family:""Segoe UI"", Tahoma, Geneva, Verdana, sans-serif; color:#1e293b; line-height:1.5;'>
     <div style='max-width:600px; margin:0 auto; background:#fff; border-radius:12px; overflow:hidden; box-shadow:0 10px 15px -3px rgba(0,0,0,0.1);'>
         
-        <!-- Header -->
         <div style='background:#1e1b4b; padding:40px 20px; text-align:center;'>
             <h1 style='color:#fbbf24; margin:0; font-size:24px; letter-spacing:4px; text-transform:uppercase;'>Cinema Ticket</h1>
             <p style='color:#94a3b8; margin:10px 0 0; font-size:13px;'>Cảm ơn bạn đã lựa chọn dịch vụ của chúng tôi</p>
         </div>
         
         <div style='padding:30px;'>
-            <!-- Xin chào -->
             <h2 style='color:#0f172a; margin:0 0 10px 0; font-size:20px;'>Xin chào {fullName},</h2>
             <p style='color:#64748b; margin:0 0 30px 0; font-size:15px;'>Giao dịch của bạn đã được xác nhận thành công.</p>
 
-            <!-- Thông tin khách hàng -->
             <div style='margin-bottom:30px;'>
                 <h4 style='text-transform:uppercase; color:#94a3b8; font-size:12px; margin:0 0 10px 0; letter-spacing:1px; border-bottom:1px solid #f1f5f9; padding-bottom:5px;'>Thông tin người đặt</h4>
                 <table width='100%' style='font-size:14px; border-collapse:collapse;'>
@@ -106,13 +116,12 @@ namespace doantotnghiep_api.Services
                 </table>
             </div>
 
-            <!-- Thông tin vé -->
             <div style='background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:20px; margin-bottom:20px;'>
                 <h4 style='text-transform:uppercase; color:#94a3b8; font-size:12px; margin:0 0 15px 0; letter-spacing:1px; text-align:center;'>Thông tin vé xem phim</h4>
                 <table width='100%' cellpadding='0' cellspacing='0'>
                     <tr>
                         <td width='120' valign='top'>
-                            <img src='{posterUrl}' style='width:100px; border-radius:8px; box-shadow:0 4px 6px -1px rgba(0,0,0,0.1);' alt='Poster'>
+                            <img src='{posterUrl}' width='100' style='display:block; width:100px; max-width:100px; border-radius:8px; box-shadow:0 4px 6px -1px rgba(0,0,0,0.1); outline:none; text-decoration:none;' alt='Poster phim {movieTitle}'>
                         </td>
                         <td valign='top' style='padding-left:20px;'>
                             <h3 style='margin:0 0 12px 0; color:#1e1b4b; font-size:18px; line-height:1.3;'>{movieTitle}</h3>
@@ -129,20 +138,17 @@ namespace doantotnghiep_api.Services
                 </table>
             </div>
 
-            <!-- Combo -->
             {(string.IsNullOrEmpty(comboDetails) ? "" : $@"
             <div style='background:#fffbeb; border:1px solid #fde68a; border-radius:10px; padding:15px; margin-bottom:20px;'>
                 <p style='margin:0; font-size:14px; color:#92400e;'><strong>Combo bắp nước:</strong> {comboDetails}</p>
             </div>
             ")}
 
-            <!-- Tổng tiền -->
             <div style='text-align:right; padding:15px 0; border-top:1px solid #f1f5f9;'>
                 <span style='color:#64748b; font-size:14px;'>Tổng cộng:</span>
                 <span style='color:#e11d48; font-size:22px; font-weight:800; margin-left:10px;'>{totalAmount:N0} VNĐ</span>
             </div>
 
-            <!-- QR Code -->
             <div style='text-align:center; padding-top:20px; margin-top:10px; border-top:2px dashed #f1f5f9;'>
                 <p style='margin:0 0 15px 0; color:#64748b; font-size:13px;'>Mã QR check-in tại quầy vé</p>
                 <div style='display:inline-block; padding:15px; background:#fff; border:1px solid #e2e8f0; border-radius:8px;'>
@@ -155,7 +161,6 @@ namespace doantotnghiep_api.Services
             </div>
         </div>
         
-        <!-- Footer -->
         <div style='background:#f8fafc; padding:20px; text-align:center; font-size:12px; color:#94a3b8; border-top:1px solid #f1f5f9;'>
             <p style='margin:0;'>&copy; {DateTime.Now.Year} Cinema Booking System. All rights reserved.</p>
         </div>
@@ -166,4 +171,3 @@ namespace doantotnghiep_api.Services
         }
     }
 }
-
