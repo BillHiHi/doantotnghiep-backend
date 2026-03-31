@@ -73,7 +73,7 @@ namespace doantotnghiep_api.Services
             // ==========================================
             // FIX LỖI POSTER EMAIL: XỬ LÝ ABSOLUTE URL
             // ==========================================
-            string baseUrl = "https://localhost:7081";
+            string baseUrl = "https://doantotnghiep-backend-whqz.onrender.com";
 
             if (string.IsNullOrEmpty(posterUrl))
             {

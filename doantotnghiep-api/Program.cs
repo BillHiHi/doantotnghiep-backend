@@ -77,17 +77,14 @@ builder.Services.AddSwaggerGen(options =>
 // ================= CORS =================
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowFrontend", policy =>
-    {
-        policy.SetIsOriginAllowed(origin =>
+    options.AddPolicy("AllowLocalhost",
+        policy =>
         {
-            var uri = new Uri(origin);
-            return uri.Host == "localhost" || uri.Host == "127.0.0.1" || uri.Host.EndsWith("vercel.app");
-        })
-            .AllowAnyHeader()
-            .AllowAnyMethod()
-            .AllowCredentials();
-    });
+            policy.WithOrigins("http://localhost:5173") 
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials(); 
+        });
 });
 
 
@@ -147,7 +144,7 @@ app.UseStaticFiles(new StaticFileOptions
 
 app.UseAuthentication();
 app.UseAuthorization();
-
+app.UseCors("AllowLocalhost");
 app.MapControllers();
 app.MapHub<BookingHub>("/Bookings");
 
