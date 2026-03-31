@@ -74,17 +74,20 @@ builder.Services.AddSwaggerGen(options =>
 });
 
 
-// ================= CORS =================
+// ================= CORS (ĐÃ FIX CHUẨN) =================
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowLocalhost",
-        policy =>
-        {
-            policy.WithOrigins("http://localhost:5173") 
-                  .AllowAnyHeader()
-                  .AllowAnyMethod()
-                  .AllowCredentials(); 
-        });
+    options.AddPolicy("AllowFrontend", policy =>
+    {
+        policy.WithOrigins(
+                "http://localhost:5173",  // Môi trường dev (Vite)
+                "http://127.0.0.1:5173",
+                "https://ten-du-an.vercel.app" // ĐỔI THÀNH LINK VERCEL SAU NÀY CỦA BẠN
+            )
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials(); // Cần thiết cho JWT Token / SignalR
+    });
 });
 
 
@@ -118,7 +121,7 @@ builder.Services.AddSignalR();
 
 
 // ========================================
-// APP PIPELINE
+// APP PIPELINE (THỨ TỰ CỰC KỲ QUAN TRỌNG)
 // ========================================
 
 var app = builder.Build();
@@ -130,9 +133,6 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
-app.UseRouting();
-
-app.UseCors("AllowFrontend");
 
 app.UseStaticFiles(new StaticFileOptions
 {
@@ -142,9 +142,14 @@ app.UseStaticFiles(new StaticFileOptions
     }
 });
 
+app.UseRouting();
+
+// CORS PHẢI NẰM Ở ĐÂY: Dưới UseRouting và Trước UseAuthentication
+app.UseCors("AllowFrontend");
+
 app.UseAuthentication();
 app.UseAuthorization();
-app.UseCors("AllowLocalhost");
+
 app.MapControllers();
 app.MapHub<BookingHub>("/Bookings");
 
