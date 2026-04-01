@@ -580,33 +580,30 @@ namespace doantotnghiep_api.Controllers
                     .Take(10)
                     .ToListAsync();
 
-                var results = new List<object>();
+                // 1. Lấy thông tin chi tiết của các payment code này trong 1 query duy nhất
+                var allBookings = await _context.Bookings
+                    .AsNoTracking()
+                    .Include(b => b.User)
+                    .Include(b => b.Showtime)
+                        .ThenInclude(s => s.Movie)
+                    .Where(b => recentCodes.Contains(b.PaymentCode))
+                    .OrderByDescending(b => b.BookingDate)
+                    .ToListAsync();
 
-                foreach (var code in recentCodes)
-                {
-                    var bookings = await _context.Bookings
-                        .Include(b => b.Seat)
-                        .Where(b => b.PaymentCode == code)
-                        .ToListAsync();
-
-                    if (bookings.Any())
-                    {
-                        var firstBooking = bookings.First();
-                        var user = await _context.Users.FindAsync(firstBooking.UserId);
-                        var showtime = await _context.Showtimes
-                            .Include(s => s.Movie)
-                            .FirstOrDefaultAsync(s => s.ShowtimeId == firstBooking.ShowtimeId);
-
-                        results.Add(new
-                        {
-                            code = code,
-                            customerName = user?.FullName ?? "Khách hàng",
-                            movie = showtime?.Movie?.Title ?? "Phim",
-                            time = showtime?.StartTime.ToString("HH:mm"),
-                            status = firstBooking.Status == "Paid" ? "PAID" : (firstBooking.Status == "Collected" ? "COLLECTED" : firstBooking.Status)
-                        });
-                    }
-                }
+                // 2. Map dữ liệu thành kết quả mong muốn, tránh lặp lại cùng 1 booking code
+                var results = allBookings
+                    .GroupBy(b => b.PaymentCode)
+                    .Select(g => {
+                        var first = g.First();
+                        return new {
+                            code = first.PaymentCode,
+                            customerName = first.User?.FullName ?? "Khách hàng",
+                            movie = first.Showtime?.Movie?.Title ?? "Phim",
+                            time = first.Showtime?.StartTime.ToString("HH:mm"),
+                            status = first.Status == "Paid" ? "PAID" : (first.Status == "Collected" ? "COLLECTED" : first.Status)
+                        };
+                    })
+                    .ToList();
 
                 return Ok(results);
             }

@@ -15,5 +15,12 @@ namespace doantotnghiep_api.Models
         public string Status { get; set; } = "Hoàn thành";
         public string? PaymentCode { get; set; }
         public string? Combos { get; set; }
+
+        // Navigation properties
+        [System.Text.Json.Serialization.JsonIgnore]
+        public virtual User? User { get; set; }
+        
+        [System.Text.Json.Serialization.JsonIgnore]
+        public virtual Showtime? Showtime { get; set; }
     }
 }

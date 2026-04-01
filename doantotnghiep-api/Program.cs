@@ -9,20 +9,33 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 
+// Fix lỗi định dạng thời gian cho PostgreSQL (Supabase)
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ================= DATABASE =================
+// ================= 1. CẤU HÌNH DATABASE =================
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("Missing DB connection");
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(connectionString));
 
-// ================= SERVICES =================
+// ================= 2. CÁC SERVICES HỆ THỐNG =================
 builder.Services.AddScoped<IEmailService, EmailService>();
-// builder.Services.AddHostedService<MovieStatusUpdateService>();
+builder.Services.AddHostedService<MovieStatusUpdateService>(); 
+
+// ⭐ ELITE OPTIMIZATION: Bật Nén Phản Hồi (Gzip/Brotli) - Giảm size JSON cực mạnh
+builder.Services.AddResponseCompression(options => {
+    options.EnableForHttps = true;
+});
+
+// ⭐ ELITE OPTIMIZATION: Bật In-Memory Cache
+builder.Services.AddMemoryCache();
+
+// ⭐ ELITE OPTIMIZATION: Bật Response Caching Service (Cần thiết cho VaryByQueryKeys)
+builder.Services.AddResponseCaching();
+
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
@@ -32,7 +45,7 @@ builder.Services.AddControllers()
 
 builder.Services.AddEndpointsApiExplorer();
 
-// ================= SWAGGER =================
+// ================= 3. SWAGGER + JWT CỦA SWAGGER =================
 builder.Services.AddSwaggerGen(options =>
 {
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
@@ -42,7 +55,7 @@ builder.Services.AddSwaggerGen(options =>
         Scheme = "bearer",
         BearerFormat = "JWT",
         In = ParameterLocation.Header,
-        Description = "Bearer {token}"
+        Description = "Nhập: Bearer {token}"
     });
 
     options.AddSecurityRequirement(new OpenApiSecurityRequirement
@@ -61,19 +74,20 @@ builder.Services.AddSwaggerGen(options =>
     });
 });
 
-// ================= CORS =================
+// ================= 4. CẤU HÌNH CORS (CHO PHÉP VUEJS GỌI API) =================
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
     {
-        policy
-            .AllowAnyOrigin() // 🚀 Cho deploy nhanh (sau này có thể siết lại)
-            .AllowAnyHeader()
-            .AllowAnyMethod();
+        policy.SetIsOriginAllowed(origin => true)
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials()
+              .SetPreflightMaxAge(TimeSpan.FromMinutes(10)); // Trình duyệt sẽ nhớ quyền CORS trong 10p, không hỏi lại liên tục
     });
 });
 
-// ================= JWT =================
+// ================= 5. CẤU HÌNH JWT AUTHENTICATION =================
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -83,46 +97,71 @@ builder.Services
             ValidateIssuer = true,
             ValidateAudience = true,
             ValidateLifetime = true,
-
             ValidateIssuerSigningKey = true,
             ValidIssuer = builder.Configuration["Jwt:Issuer"],
             ValidAudience = builder.Configuration["Jwt:Audience"],
-
             IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!)
-            )
+                Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"] ?? "SecretKeyToDefendYourAPI2026"))
         };
     });
 
 builder.Services.AddAuthorization();
 
-// ================= SIGNALR =================
+// ================= 6. SIGNALR =================
 builder.Services.AddSignalR();
 
-// ================= BUILD APP =================
+// ================================================
 var app = builder.Build();
+// ================================================
 
-// ================= MIDDLEWARE =================
+// ================= 7. MIDDLEWARE PIPELINE (THỨ TỰ RẤT QUAN TRỌNG) =================
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
+// FIX LỖI 404 ẢNH: Phải nằm trước UseRouting
+app.UseStaticFiles();
 
+// Nén response JSON/HTML...
+app.UseResponseCompression();
+
+app.UseHttpsRedirection();
 app.UseRouting();
 
-app.UseCors("AllowFrontend"); // 🔥 QUAN TRỌNG
+// FIX LỖI CORS: Phải nằm giữa UseRouting và UseAuthentication
+app.UseCors("AllowFrontend");
+
+// ⭐ ELITE OPTIMIZATION: Bật Middleware Response Caching (Nên nằm sau CORS)
+app.UseResponseCaching();
 
 app.UseAuthentication();
 app.UseAuthorization();
 
+// ĐỊNH TUYẾN API & SIGNALR
 app.MapControllers();
 app.MapHub<BookingHub>("/bookings");
 
-// ================= HEALTH CHECK =================
-app.MapGet("/", () => "API is running... 🚀");
+// HEALTH CHECK ĐỂ RENDER KIỂM TRA TRẠNG THÁI APP
+app.MapGet("/", () => "Backend Cinema API is running... 🚀");
 
-// ================= RUN =================
+// ================= 8. AUTO MIGRATE (TỰ ĐỘNG TẠO BẢNG) =================
+// Lưu ý: Đoạn này sẽ giúp bạn tự tạo bảng trên Supabase khi deploy
+using (var scope = app.Services.CreateScope())
+{
+    var services = scope.ServiceProvider;
+    try
+    {
+        var context = services.GetRequiredService<AppDbContext>();
+        // await context.Database.MigrateAsync(); // Bỏ comment nếu muốn tự động tạo bảng
+    }
+    catch (Exception ex)
+    {
+        var logger = services.GetRequiredService<ILogger<Program>>();
+        logger.LogError(ex, "Lỗi khi khởi tạo Database");
+    }
+}
+
 app.Run();

@@ -1,4 +1,4 @@
-﻿using doantotnghiep_api.Data;
+using doantotnghiep_api.Data;
 using doantotnghiep_api.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -22,9 +22,10 @@ namespace doantotnghiep_api.Controllers
         // =========================
         [HttpGet]
         [AllowAnonymous]
+        [ResponseCache(Duration = 300)] // Cache 5 phút cho tất cả
         public async Task<IActionResult> GetTheaters([FromQuery] string? city = null)
         {
-            var query = _context.Theaters.AsQueryable();
+            var query = _context.Theaters.AsNoTracking();
 
             if (!string.IsNullOrEmpty(city))
             {
