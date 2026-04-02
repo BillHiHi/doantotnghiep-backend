@@ -1,4 +1,4 @@
-﻿using doantotnghiep_api.Models;
+using doantotnghiep_api.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Internal;
 
@@ -17,6 +17,16 @@ namespace doantotnghiep_api.Data
                 .HasOne(b => b.Seat)
                 .WithMany()
                 .HasForeignKey(b => b.SeatId);
+
+            modelBuilder.Entity<Bookings>()
+                .HasOne(b => b.Showtime)
+                .WithMany(s => s.Bookings)
+                .HasForeignKey(b => b.ShowtimeId);
+
+            modelBuilder.Entity<Bookings>()
+                .HasOne(b => b.User)
+                .WithMany()
+                .HasForeignKey(b => b.UserId);
         }
         public DbSet<Movie> Movies { get; set; }
         public DbSet<SeatLock> SeatLocks { get; set; }

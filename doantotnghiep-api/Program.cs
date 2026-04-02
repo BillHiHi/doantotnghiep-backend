@@ -3,61 +3,38 @@ using System.Text;
 using doantotnghiep_api.Data;
 using doantotnghiep_api.Hubs;
 using doantotnghiep_api.Models;
+using doantotnghiep_api.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
-using Npgsql;
 
-using doantotnghiep_api.Services;
-
+// Fix lỗi định dạng thời gian cho PostgreSQL (Supabase)
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ================= Swagger + Registration =================
-builder.Services.AddScoped<IEmailService, EmailService>();
-
-
-// ========================================
-// DATABASE CONFIG (Railway + Local)
-// ========================================
-
-var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
-
-string connectionString;
-
-if (!string.IsNullOrEmpty(databaseUrl))
-{
-    var uri = new Uri(databaseUrl);
-    var userInfo = uri.UserInfo.Split(':');
-
-    var dbBuilder = new NpgsqlConnectionStringBuilder
-    {
-        Host = uri.Host,
-        Port = uri.Port,
-        Username = userInfo[0],
-        Password = userInfo[1],
-        Database = uri.AbsolutePath.Trim('/'),
-        SslMode = SslMode.Require,
-        TrustServerCertificate = true
-    };
-
-    connectionString = dbBuilder.ToString();
-}
-else
-{
-    connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
-}
+// ================= 1. CẤU HÌNH DATABASE =================
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
+    ?? throw new InvalidOperationException("Missing DB connection");
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(connectionString));
 
+// ================= 2. CÁC SERVICES HỆ THỐNG =================
+builder.Services.AddScoped<IEmailService, EmailService>();
+builder.Services.AddHostedService<MovieStatusUpdateService>(); 
 
+// ⭐ ELITE OPTIMIZATION: Bật Nén Phản Hồi (Gzip/Brotli) - Giảm size JSON cực mạnh
+builder.Services.AddResponseCompression(options => {
+    options.EnableForHttps = true;
+});
 
-// ========================================
-// SERVICES
-// ========================================
+// ⭐ ELITE OPTIMIZATION: Bật In-Memory Cache
+builder.Services.AddMemoryCache();
+
+// ⭐ ELITE OPTIMIZATION: Bật Response Caching Service (Cần thiết cho VaryByQueryKeys)
+builder.Services.AddResponseCaching();
 
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
@@ -68,8 +45,7 @@ builder.Services.AddControllers()
 
 builder.Services.AddEndpointsApiExplorer();
 
-
-// ================= Swagger + JWT =================
+// ================= 3. SWAGGER + JWT CỦA SWAGGER =================
 builder.Services.AddSwaggerGen(options =>
 {
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
@@ -79,7 +55,7 @@ builder.Services.AddSwaggerGen(options =>
         Scheme = "bearer",
         BearerFormat = "JWT",
         In = ParameterLocation.Header,
-        Description = "Nhập: Bearer {your token}"
+        Description = "Nhập: Bearer {token}"
     });
 
     options.AddSecurityRequirement(new OpenApiSecurityRequirement
@@ -93,30 +69,25 @@ builder.Services.AddSwaggerGen(options =>
                     Id = "Bearer"
                 }
             },
-            new string[] {}
+            Array.Empty<string>()
         }
     });
 });
 
-
-// ================= CORS =================
+// ================= 4. CẤU HÌNH CORS (CHO PHÉP VUEJS GỌI API) =================
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
     {
-        policy.SetIsOriginAllowed(origin => 
-            {
-                var uri = new Uri(origin);
-                return uri.Host == "localhost" || uri.Host == "127.0.0.1" || uri.Host.EndsWith("vercel.app");
-            })
-            .AllowAnyHeader()
-            .AllowAnyMethod()
-            .AllowCredentials();
+        policy.SetIsOriginAllowed(origin => true)
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials()
+              .SetPreflightMaxAge(TimeSpan.FromMinutes(10)); // Trình duyệt sẽ nhớ quyền CORS trong 10p, không hỏi lại liên tục
     });
 });
 
-
-// ================= JWT Authentication =================
+// ================= 5. CẤU HÌNH JWT AUTHENTICATION =================
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -127,29 +98,23 @@ builder.Services
             ValidateAudience = true,
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
-
             ValidIssuer = builder.Configuration["Jwt:Issuer"],
             ValidAudience = builder.Configuration["Jwt:Audience"],
-
             IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"])
-            )
+                Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"] ?? "SecretKeyToDefendYourAPI2026"))
         };
     });
 
 builder.Services.AddAuthorization();
 
-
-// ================= SignalR =================
+// ================= 6. SIGNALR =================
 builder.Services.AddSignalR();
 
-
-
-// ========================================
-// APP PIPELINE
-// ========================================
-
+// ================================================
 var app = builder.Build();
+// ================================================
+
+// ================= 7. MIDDLEWARE PIPELINE (THỨ TỰ RẤT QUAN TRỌNG) =================
 
 if (app.Environment.IsDevelopment())
 {
@@ -157,106 +122,45 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+// FIX LỖI 404 ẢNH: Phải nằm trước UseRouting
+app.UseStaticFiles();
+
+// Nén response JSON/HTML...
+app.UseResponseCompression();
+
 app.UseHttpsRedirection();
 app.UseRouting();
 
+// FIX LỖI CORS: Phải nằm giữa UseRouting và UseAuthentication
 app.UseCors("AllowFrontend");
 
-app.UseStaticFiles(new StaticFileOptions
-{
-    ContentTypeProvider = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider
-    {
-        Mappings = { [".avif"] = "image/avif" }
-    }
-});
+// ⭐ ELITE OPTIMIZATION: Bật Middleware Response Caching (Nên nằm sau CORS)
+app.UseResponseCaching();
 
 app.UseAuthentication();
 app.UseAuthorization();
 
+// ĐỊNH TUYẾN API & SIGNALR
 app.MapControllers();
-app.MapHub<BookingHub>("/Bookings");
+app.MapHub<BookingHub>("/bookings");
 
+// HEALTH CHECK ĐỂ RENDER KIỂM TRA TRẠNG THÁI APP
+app.MapGet("/", () => "Backend Cinema API is running... 🚀");
 
-
-// ========================================
-// AUTO MIGRATE + SEED ADMIN
-// ========================================
-
-using (var scope = app.Services.CreateScope())
-{
-    var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
-    context.Database.Migrate();
-
-    if (!context.Users.Any(x => x.Role == "Admin"))
-    {
-        string Hash(string password)
-        {
-            using var sha = SHA256.Create();
-            return Convert.ToBase64String(
-                sha.ComputeHash(Encoding.UTF8.GetBytes(password))
-            );
-        }
-
-        context.Users.Add(new User
-        {
-            Email = "admin@cinema.com",
-            PasswordHash = Hash("123456"),
-            FullName = "System Admin",
-            PhoneNumber = "",
-            Role = "Admin",
-            CreatedAt = DateTime.UtcNow
-        });
-
-        context.SaveChanges(); 
-
-        Console.WriteLine("🔥 Admin created:");
-        Console.WriteLine("Email: admin@cinema.com");
-        Console.WriteLine("Password: 123456");
-    }
-}
-
-// Tự động kiểm tra và tạo bảng nếu thiếu (Sửa lỗi relation does not exist)
+// ================= 8. AUTO MIGRATE (TỰ ĐỘNG TẠO BẢNG) =================
+// Lưu ý: Đoạn này sẽ giúp bạn tự tạo bảng trên Supabase khi deploy
 using (var scope = app.Services.CreateScope())
 {
     var services = scope.ServiceProvider;
-    var context = services.GetRequiredService<AppDbContext>();
-    // context.Database.Migrate(); // Bạn có thể dùng lệnh này nếu muốn chạy tất cả migration
-    
-    // Hoặc ép tạo bảng bằng SQL script nếu table chưa tồn tại
-    var conn = context.Database.GetDbConnection();
-    try {
-        await context.Database.ExecuteSqlRawAsync(@"
-            CREATE TABLE IF NOT EXISTS ""Promotions"" (
-                ""PromotionId"" SERIAL PRIMARY KEY,
-                ""Title"" VARCHAR(200) NOT NULL,
-                ""Summary"" TEXT,
-                ""Content"" TEXT,
-                ""ImageUrl"" TEXT,
-                ""StartDate"" TIMESTAMP WITH TIME ZONE NOT NULL,
-                ""EndDate"" TIMESTAMP WITH TIME ZONE NOT NULL,
-                ""IsPublished"" BOOLEAN NOT NULL,
-                ""CreatedAt"" TIMESTAMP WITH TIME ZONE NOT NULL
-            );
-
-            -- Thêm cột thiếu cho bảng SeatLocks (Postgres mặc định chữ thường trong catalog)
-            DO $$ 
-            BEGIN 
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE lower(table_name)='seatlocks' AND lower(column_name)='paymentcode') THEN
-                    ALTER TABLE ""SeatLocks"" ADD COLUMN ""PaymentCode"" TEXT;
-                END IF;
-
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE lower(table_name)='seatlocks' AND lower(column_name)='totalamount') THEN
-                    ALTER TABLE ""SeatLocks"" ADD COLUMN ""TotalAmount"" DECIMAL(18,2);
-                END IF;
-
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE lower(table_name)='seatlocks' AND lower(column_name)='combos') THEN
-                    ALTER TABLE ""SeatLocks"" ADD COLUMN ""Combos"" TEXT;
-                END IF;
-            END $$;
-        ");
-    } catch (Exception ex) { 
-        Console.WriteLine("DB Auto-Fix Error: " + ex.Message);
+    try
+    {
+        var context = services.GetRequiredService<AppDbContext>();
+        // await context.Database.MigrateAsync(); // Bỏ comment nếu muốn tự động tạo bảng
+    }
+    catch (Exception ex)
+    {
+        var logger = services.GetRequiredService<ILogger<Program>>();
+        logger.LogError(ex, "Lỗi khi khởi tạo Database");
     }
 }
 

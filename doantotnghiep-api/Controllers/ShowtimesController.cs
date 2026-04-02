@@ -24,10 +24,21 @@ namespace doantotnghiep_api.Controllers
         // =====================================================
         [HttpGet]
         [AllowAnonymous]
-        public async Task<IActionResult> GetAll()
+        public async Task<IActionResult> GetAll(DateTime? from, DateTime? to)
         {
-            var data = await _context.Showtimes
-                .AsNoTracking()
+            var query = _context.Showtimes.AsNoTracking();
+
+            if (from.HasValue)
+                query = query.Where(s => s.StartTime >= from.Value);
+            
+            if (to.HasValue)
+                query = query.Where(s => s.StartTime <= to.Value);
+
+            // Nếu không có filter, mặc định lấy suất chiếu từ hôm nay trở đi để tránh tải quá nhiều
+            if (!from.HasValue && !to.HasValue)
+                query = query.Where(s => s.StartTime >= DateTime.Today);
+
+            var data = await query
                 .OrderByDescending(s => s.StartTime)
                 .Select(s => new ShowtimeDto
                 {
@@ -40,9 +51,10 @@ namespace doantotnghiep_api.Controllers
                     EndTime = s.EndTime,
                     TheaterId = s.Screen.TheaterId,
                     BasePrice = s.BasePrice,
-                    TotalSeats = _context.Seats.Count(st => st.ScreenId == s.ScreenId),
-                    AvailableSeats = _context.Seats.Count(st => st.ScreenId == s.ScreenId) -
-                                     _context.Bookings.Count(b => b.ShowtimeId == s.ShowtimeId && b.Status == "Hoàn thành")
+                    // Tối ưu hóa: Chỉ tính count khi cần thiết hoặc dùng JOIN
+                    TotalSeats = s.Screen != null ? s.Screen.Seats.Count() : 0,
+                    AvailableSeats = (s.Screen != null ? s.Screen.Seats.Count() : 0) - 
+                                     (s.Bookings != null ? s.Bookings.Count(b => b.Status == "Hoàn thành" || b.Status == "Paid") : 0)
                 })
                 .ToListAsync();
 

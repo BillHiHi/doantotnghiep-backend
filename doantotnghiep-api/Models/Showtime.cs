@@ -1,4 +1,4 @@
-﻿namespace doantotnghiep_api.Models
+namespace doantotnghiep_api.Models
 {
     public class Showtime
     {
@@ -12,6 +12,9 @@
         // Navigation properties
         public virtual Movie Movie { get; set; } = null!; //
         public virtual Screen Screen { get; set; } = null!;
+
+        [System.Text.Json.Serialization.JsonIgnore]
+        public virtual ICollection<Bookings> Bookings { get; set; } = new List<Bookings>();
 
     }
 }

@@ -1,4 +1,4 @@
-﻿using doantotnghiep_api.Data;
+using doantotnghiep_api.Data;
 using doantotnghiep_api.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -22,9 +22,10 @@ namespace doantotnghiep_api.Controllers
         // =========================
         [HttpGet]
         [AllowAnonymous]
+        [ResponseCache(Duration = 300)] // Cache 5 phút cho tất cả
         public async Task<IActionResult> GetTheaters([FromQuery] string? city = null)
         {
-            var query = _context.Theaters.AsQueryable();
+            var query = _context.Theaters.AsNoTracking();
 
             if (!string.IsNullOrEmpty(city))
             {
@@ -33,6 +34,22 @@ namespace doantotnghiep_api.Controllers
 
             var theaters = await query.ToListAsync();
             return Ok(theaters);
+        }
+
+        // =========================
+        // Lấy danh sách thành phố (API MỚI)
+        // =========================
+        [HttpGet("cities")]
+        [AllowAnonymous]
+        public async Task<IActionResult> GetCities()
+        {
+            var cities = await _context.Theaters
+                .Where(t => !string.IsNullOrEmpty(t.City)) // Loại bỏ những rạp lỡ quên chưa nhập thành phố
+                .Select(t => t.City)
+                .Distinct()
+                .ToListAsync();
+
+            return Ok(cities);
         }
 
         // =========================
@@ -100,7 +117,8 @@ namespace doantotnghiep_api.Controllers
         public async Task<IActionResult> GetMoviesByTheater(int theaterId)
         {
             var movies = await _context.Showtimes
-                .Where(s => s.Screen.TheaterId == theaterId)
+                // Thêm s.StartTime >= DateTime.Now để không hiển thị phim của ngày hôm qua
+                .Where(s => s.Screen.TheaterId == theaterId && s.StartTime >= DateTime.Now)
                 .Include(s => s.Movie)
                 .Select(s => s.Movie)
                 .Distinct()

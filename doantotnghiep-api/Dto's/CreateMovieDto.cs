@@ -27,5 +27,6 @@ namespace doantotnghiep_api.Dto_s
 
         public string Status { get; set; } = "NowShowing";
         public DateTime ReleaseDate { get; set; }
+        public DateTime EndDate { get; set; }
     }
 }
