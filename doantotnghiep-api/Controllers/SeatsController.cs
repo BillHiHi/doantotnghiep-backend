@@ -140,6 +140,21 @@ namespace doantotnghiep_api.Controllers
 
             return NoContent();
         }
+
+        // ===============================
+        // ✅ DELETE ALL BY SCREEN
+        // ===============================
+        [HttpDelete("delete-all-in-screen/{screenId}")]
+        public async Task<IActionResult> DeleteAllByScreen(int screenId)
+        {
+            var seats = await _context.Seats.Where(s => s.ScreenId == screenId).ToListAsync();
+            if (seats.Count == 0) return Ok(new { message = "Không có ghế nào để xóa." });
+
+            _context.Seats.RemoveRange(seats);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = $"Đã xóa thành công {seats.Count} ghế của phòng này." });
+        }
     }
 
     // =====================================
