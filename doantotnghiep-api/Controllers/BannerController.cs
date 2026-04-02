@@ -1,4 +1,4 @@
-﻿using doantotnghiep_api.Data;
+using doantotnghiep_api.Data;
 using doantotnghiep_api.Dto_s;
 using doantotnghiep_api.Models;
 using Microsoft.AspNetCore.Authorization;
@@ -40,7 +40,7 @@ namespace doantotnghiep_api.Controllers
 
         // UPLOAD
         [HttpPost("upload")]
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN")]
         [Consumes("multipart/form-data")]
         public async Task<IActionResult> UploadBanner([FromForm] UploadBannerDto dto)
         {
@@ -79,7 +79,7 @@ namespace doantotnghiep_api.Controllers
 
         // UPDATE
         [HttpPut("{id}")]
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN")]
         public async Task<IActionResult> UpdateBanner(int id, [FromBody] Banner banner)
         {
             if (id != banner.BannerId)
@@ -93,7 +93,7 @@ namespace doantotnghiep_api.Controllers
 
         // DELETE
         [HttpDelete("{id}")]
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN")]
         public async Task<IActionResult> DeleteBanner(int id)
         {
             var banner = await _context.Banners.FindAsync(id);

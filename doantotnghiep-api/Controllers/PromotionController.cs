@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using doantotnghiep_api.Data;
 using doantotnghiep_api.Models;
@@ -7,6 +8,7 @@ namespace doantotnghiep_api.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
+    [Authorize(Roles = "Admin,SUPER_ADMIN")]
     public class PromotionController : ControllerBase
     {
         private readonly AppDbContext _context;

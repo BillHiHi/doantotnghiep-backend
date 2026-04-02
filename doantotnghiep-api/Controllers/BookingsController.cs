@@ -6,6 +6,7 @@ using doantotnghiep_api.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Authorization;
 
 namespace doantotnghiep_api.Controllers
 {
@@ -27,6 +28,11 @@ namespace doantotnghiep_api.Controllers
             _serviceProvider = serviceProvider;
             _configuration = configuration;
         }
+
+        // 💡 RBAC HELPER: Lấy TheaterId của người dùng hiện tại từ Token
+        private int? UserTheaterId => int.TryParse(User.Claims.FirstOrDefault(c => c.Type == "TheaterId")?.Value, out var id) ? id : null;
+        private bool IsBranchAdmin => User.IsInRole("BRANCH_ADMIN");
+        private bool IsSuperAdmin => User.IsInRole("SUPER_ADMIN") || User.IsInRole("Admin");
 
         // =============================================
         // HOLD SEAT
@@ -55,8 +61,15 @@ namespace doantotnghiep_api.Controllers
 
                 if (expired.Any())
                 {
-                    _context.SeatLocks.RemoveRange(expired);
-                    await _context.SaveChangesAsync();
+                    try
+                    {
+                        _context.SeatLocks.RemoveRange(expired);
+                        await _context.SaveChangesAsync();
+                    }
+                    catch (DbUpdateConcurrencyException)
+                    {
+                        // Ignore if already deleted by another request
+                    }
                 }
 
                 // check seat
@@ -75,13 +88,24 @@ namespace doantotnghiep_api.Controllers
                 if (currentLocksCount >= 8)
                     return BadRequest("Vui lòng thanh toán để chọn thêm ghế");
 
-                var locked = await _context.SeatLocks.AnyAsync(x =>
+                var existingLock = await _context.SeatLocks.FirstOrDefaultAsync(x =>
                     x.SeatId == request.SeatId &&
                     x.ShowtimeId == request.ShowtimeId &&
                     x.ExpiryTime > now);
 
-                if (locked)
+                if (existingLock != null)
+                {
+                    // Nếu chính user này đang giữ ghế -> Cập nhật lại thời gian (Idempotent)
+                    if (existingLock.UserId == request.UserId)
+                    {
+                        existingLock.ExpiryTime = now.AddMinutes(10);
+                        await _context.SaveChangesAsync();
+                        return Ok();
+                    }
+                    
+                    // Nếu người khác đang giữ
                     return BadRequest("Seat đã bị giữ");
+                }
 
                 var seatLock = new SeatLock
                 {
@@ -123,8 +147,15 @@ namespace doantotnghiep_api.Controllers
                 if (lockSeat == null)
                     return Ok();
 
-                _context.SeatLocks.Remove(lockSeat);
-                await _context.SaveChangesAsync();
+                try
+                {
+                    _context.SeatLocks.Remove(lockSeat);
+                    await _context.SaveChangesAsync();
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    // Already removed or modified, which is fine for a release operation
+                }
 
                 await _hub.Clients
                     .Group($"Showtime_{request.ShowtimeId}")
@@ -207,11 +238,11 @@ namespace doantotnghiep_api.Controllers
                         .SendAsync("ReceiveSeatStatus", seatId, "Locked", dto.UserId);
                 }
 
-                // Sử dụng định dạng VietQR để khách hàng quét mã là có sẵn STK, Số tiền và Nội dung
-                // Bạn hãy thay ACCOUNT_NUMBER và BANK_NAME bằng thông tin của bạn
-                // Hoặc sử dụng dịch vụ của SePay: https://qr.sepay.vn/img?acc=STK&bank=NGAN_HANG&amount=TIEN&des=NOI_DUNG
-                var bankAccount = "YOU_STK"; 
-                var bankName = "YOUR_BANK";
+                // Sử dụng cấu hình từ appsettings.json
+                var sePaySection = _configuration.GetSection("SePaySettings");
+                var bankAccount = sePaySection["BankAccount"] ?? "YOUR_STK";
+                var bankName = sePaySection["BankName"] ?? "MBBank";
+                
                 var qrUrl = $"https://qr.sepay.vn/img?acc={bankAccount}&bank={bankName}&amount={dto.TotalAmount}&des={paymentCode}";
 
                 return Ok(new PaymentResultDto
@@ -507,19 +538,27 @@ namespace doantotnghiep_api.Controllers
         // SCAN TICKET BY PAYMENT CODE
         // =============================================
         [HttpGet("scan/{paymentCode}")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN")]
         public async Task<IActionResult> ScanTicket(string paymentCode)
         {
             try
             {
                 var bookings = await _context.Bookings
                     .Include(b => b.Seat)
+                    .Include(b => b.Showtime.Screen)
                     .Where(b => b.PaymentCode == paymentCode)
                     .ToListAsync();
 
                 if (!bookings.Any())
                     return NotFound(new { message = $"Không tìm thấy đơn hàng với mã {paymentCode}" });
 
+                // 💡 RBAC: Kiểm tra rạp của đơn hàng
                 var firstBooking = bookings.First();
+                if (IsBranchAdmin && UserTheaterId.HasValue && firstBooking.Showtime.Screen.TheaterId != UserTheaterId.Value)
+                {
+                    return Forbid("Đơn hàng này thuộc rạp khác, bạn không có quyền kiểm tra.");
+                }
+
                 var user = await _context.Users.FindAsync(firstBooking.UserId);
                 var showtime = await _context.Showtimes
                     .Include(s => s.Movie)
@@ -567,12 +606,24 @@ namespace doantotnghiep_api.Controllers
         // GET RECENT TICKETS (Lịch sử giao dịch)
         // =============================================
         [HttpGet("recent")]
-        public async Task<IActionResult> GetRecentTickets()
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN")]
+        public async Task<IActionResult> GetRecentTickets([FromQuery] int? theaterId)
         {
             try
             {
-                // Lấy các payment code mới nhất (những booking thành công)
-                var recentCodes = await _context.Bookings
+                var query = _context.Bookings.AsNoTracking();
+
+                // 💡 RBAC LỌC THEO RẠP
+                if (IsBranchAdmin && UserTheaterId.HasValue)
+                {
+                    query = query.Where(b => b.Showtime.Screen.TheaterId == UserTheaterId.Value);
+                }
+                else if (IsSuperAdmin && theaterId.HasValue)
+                {
+                    query = query.Where(b => b.Showtime.Screen.TheaterId == theaterId.Value);
+                }
+
+                var recentCodes = await query
                     .Where(b => b.PaymentCode != null)
                     .OrderByDescending(b => b.BookingDate)
                     .Select(b => b.PaymentCode)
@@ -617,16 +668,22 @@ namespace doantotnghiep_api.Controllers
         // COLLECT TICKET (Phát vé)
         // =============================================
         [HttpPost("collect/{paymentCode}")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN")]
         public async Task<IActionResult> CollectTicket(string paymentCode)
         {
             try
             {
                 var bookings = await _context.Bookings
+                    .Include(b => b.Showtime.Screen)
                     .Where(b => b.PaymentCode == paymentCode)
                     .ToListAsync();
 
                 if (!bookings.Any())
                     return NotFound("Không tìm thấy đơn hàng");
+
+                // 💡 RBAC: KIỂM TRA RẠP
+                if (IsBranchAdmin && UserTheaterId.HasValue && bookings.First().Showtime.Screen.TheaterId != UserTheaterId.Value)
+                    return Forbid("Bạn không có quyền phát vé cho rạp khác.");
 
                 foreach (var booking in bookings)
                 {

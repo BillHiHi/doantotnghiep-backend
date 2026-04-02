@@ -34,5 +34,6 @@ public class Movie
     
     [System.Text.Json.Serialization.JsonIgnore]
     public virtual ICollection<Showtime>? Showtimes { get; set; }
+    public ICollection<TheaterMovie> TheaterMovies { get; set; } = new List<TheaterMovie>();
 
 }

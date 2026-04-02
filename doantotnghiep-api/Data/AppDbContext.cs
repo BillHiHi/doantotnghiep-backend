@@ -1,4 +1,4 @@
-using doantotnghiep_api.Models;
+﻿using doantotnghiep_api.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Internal;
 
@@ -13,20 +13,21 @@ namespace doantotnghiep_api.Data
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
-            modelBuilder.Entity<Bookings>()
-                .HasOne(b => b.Seat)
-                .WithMany()
-                .HasForeignKey(b => b.SeatId);
+            base.OnModelCreating(modelBuilder);
 
-            modelBuilder.Entity<Bookings>()
-                .HasOne(b => b.Showtime)
-                .WithMany(s => s.Bookings)
-                .HasForeignKey(b => b.ShowtimeId);
+            // Cấu hình khóa chính cho bảng trung gian
+            modelBuilder.Entity<TheaterMovie>()
+                .HasKey(tm => new { tm.MovieId, tm.TheaterId });
 
-            modelBuilder.Entity<Bookings>()
-                .HasOne(b => b.User)
-                .WithMany()
-                .HasForeignKey(b => b.UserId);
+            modelBuilder.Entity<TheaterMovie>()
+                .HasOne(tm => tm.Movie)
+                .WithMany(m => m.TheaterMovies)
+                .HasForeignKey(tm => tm.MovieId);
+
+            modelBuilder.Entity<TheaterMovie>()
+                .HasOne(tm => tm.Theater)
+                .WithMany() // Nếu bảng Theater không có ICollection<TheaterMovie> thì để trống
+                .HasForeignKey(tm => tm.TheaterId);
         }
         public DbSet<Movie> Movies { get; set; }
         public DbSet<SeatLock> SeatLocks { get; set; }
@@ -37,9 +38,9 @@ namespace doantotnghiep_api.Data
         public DbSet<Screen> Screens { get; set; }
         public DbSet<Banner> Banners { get; set; }
         public DbSet<Theater> Theaters { get; set; }
-
         public DbSet<Foods> Foods { get; set; }
         public DbSet<Promotion> Promotions { get; set; }
+        public DbSet<TheaterMovie> TheaterMovies { get; set; }
 
     }
 }
