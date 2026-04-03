@@ -1,5 +1,6 @@
-﻿using doantotnghiep_api.Data;
+using doantotnghiep_api.Data;
 using doantotnghiep_api.Models;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -20,6 +21,7 @@ namespace doantotnghiep_api.Controllers
         // 1. Lấy tất cả món ăn
         // =========================
         [HttpGet]
+        [AllowAnonymous]
         public async Task<IActionResult> GetAllFoods()
         {
             var foods = await _context.Foods.ToListAsync();
@@ -30,6 +32,7 @@ namespace doantotnghiep_api.Controllers
         // 2. Lấy món theo ID
         // =========================
         [HttpGet("{id}")]
+        [AllowAnonymous]
         public async Task<IActionResult> GetFoodById(int id)
         {
             var food = await _context.Foods.FindAsync(id);
@@ -44,6 +47,7 @@ namespace doantotnghiep_api.Controllers
         // 3. Thêm món ăn
         // =========================
         [HttpPost]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN,BranchAdmin")]
         public async Task<IActionResult> CreateFood(Foods food)
         {
             if (!ModelState.IsValid)
@@ -59,6 +63,7 @@ namespace doantotnghiep_api.Controllers
         // 4. Cập nhật món ăn
         // =========================
         [HttpPut("{id}")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN,BranchAdmin")]
         public async Task<IActionResult> UpdateFood(int id, Foods updatedFood)
         {
             if (id != updatedFood.FoodId)
@@ -83,6 +88,7 @@ namespace doantotnghiep_api.Controllers
         // 5. Xóa món ăn
         // =========================
         [HttpDelete("{id}")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN,BranchAdmin")]
         public async Task<IActionResult> DeleteFood(int id)
         {
             var food = await _context.Foods.FindAsync(id);

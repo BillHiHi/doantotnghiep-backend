@@ -110,7 +110,7 @@ namespace doantotnghiep_api.Controllers
         }
 
         [HttpPost("assign-to-theater")]
-        [Authorize(Roles = "Admin,SUPER_ADMIN")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN,BranchAdmin")]
         public async Task<IActionResult> AssignMovieToTheater([FromBody] AssignMovieTheaterDto dto)
         {
             var movieExists = await _context.Movies.AnyAsync(m => m.MovieId == dto.MovieID);
@@ -138,7 +138,7 @@ namespace doantotnghiep_api.Controllers
         }
 
         [HttpDelete("remove-from-theater/{theaterId}/{movieId}")]
-        [Authorize(Roles = "Admin,SUPER_ADMIN")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN,BranchAdmin")]
         public async Task<IActionResult> RemoveMovieFromTheater(int theaterId, int movieId)
         {
             var theaterMovie = await _context.TheaterMovies
@@ -158,7 +158,7 @@ namespace doantotnghiep_api.Controllers
         // =================================================
 
         [HttpPost]
-        [Authorize(Roles = "Admin,SUPER_ADMIN")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN,BranchAdmin")]
         public async Task<IActionResult> CreateMovie([FromBody] CreateMovieDto dto)
         {
             // TỐI ƯU: Nên kiểm tra logic ngày tháng
@@ -189,7 +189,7 @@ namespace doantotnghiep_api.Controllers
         }
 
         [HttpPut("{id}")]
-        [Authorize(Roles = "Admin,SUPER_ADMIN")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN,BranchAdmin")]
         public async Task<IActionResult> UpdateMovie(int id, [FromBody] UpdateMovieDto dto)
         {
             if (dto.EndDate.HasValue && dto.EndDate.Value <= dto.ReleaseDate)
@@ -220,7 +220,7 @@ namespace doantotnghiep_api.Controllers
         }
 
         [HttpDelete("{id}")]
-        [Authorize(Roles = "Admin,SUPER_ADMIN")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN,BranchAdmin")]
         public async Task<IActionResult> DeleteMovie(int id)
         {
             var movie = await _context.Movies.FindAsync(id);
@@ -239,7 +239,7 @@ namespace doantotnghiep_api.Controllers
         // =================================================
 
         [HttpPost("upload")]
-        [Authorize(Roles = "Admin,SUPER_ADMIN")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN,BranchAdmin")]
         [Consumes("multipart/form-data")]
         public async Task<IActionResult> UploadPoster([FromForm] UploadPosterDto dto)
         {

@@ -8,7 +8,7 @@ namespace doantotnghiep_api.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN,BranchAdmin")]
     public class SeatsController : ControllerBase
     {
         private readonly AppDbContext _context;

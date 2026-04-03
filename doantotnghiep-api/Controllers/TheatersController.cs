@@ -86,7 +86,7 @@ namespace doantotnghiep_api.Controllers
         // Thêm rạp mới
         // =========================
         [HttpPost]
-        [Authorize(Roles = "Admin,SUPER_ADMIN")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN,BranchAdmin")]
         public async Task<IActionResult> CreateTheater([FromBody] Theater theater)
         {
             if (!ModelState.IsValid)
@@ -102,7 +102,7 @@ namespace doantotnghiep_api.Controllers
         // Cập nhật rạp
         // =========================
         [HttpPut("{id}")]
-        [Authorize(Roles = "Admin,SUPER_ADMIN")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN,BranchAdmin")]
         public async Task<IActionResult> UpdateTheater(int id, [FromBody] Theater updatedTheater)
         {
             if (id != updatedTheater.TheaterId)
@@ -126,7 +126,7 @@ namespace doantotnghiep_api.Controllers
         // Xóa rạp
         // =========================
         [HttpDelete("{id}")]
-        [Authorize(Roles = "Admin,SUPER_ADMIN")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN,BranchAdmin")]
         public async Task<IActionResult> DeleteTheater(int id)
         {
             var theater = await _context.Theaters.FindAsync(id);
