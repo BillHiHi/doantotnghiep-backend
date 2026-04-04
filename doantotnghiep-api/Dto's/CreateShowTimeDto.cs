@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 
 namespace doantotnghiep_api.Dto_s
 {
@@ -17,5 +17,7 @@ namespace doantotnghiep_api.Dto_s
 
         [Range(0, 1000000)]
         public decimal BasePrice { get; set; }
+
+        public bool IsEarlyScreening { get; set; }
     }
 }

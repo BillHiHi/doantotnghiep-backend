@@ -1,4 +1,4 @@
-﻿namespace doantotnghiep_api.Dtos
+namespace doantotnghiep_api.Dtos
 {
     public class ShowtimeDto
     {
@@ -25,5 +25,6 @@
         public decimal BasePrice { get; set; }
         public int AvailableSeats { get; set; }
         public int TotalSeats { get; set; }
+        public bool IsEarlyScreening { get; set; }
     }
 }

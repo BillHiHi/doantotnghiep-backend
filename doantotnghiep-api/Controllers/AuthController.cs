@@ -167,6 +167,12 @@ namespace doantotnghiep_api.Controllers
                 user.Role,
                 user.TheaterId,
                 TheaterName = user.Theater?.Name,
+                Dob = user.Dob?.ToString("yyyy-MM-dd"), // Format chuẩn ISO cho component Date
+                user.IdCard,
+                user.Gender,
+                user.City,
+                user.District,
+                user.Address,
                 user.CreatedAt
             });
         }
@@ -181,6 +187,20 @@ namespace doantotnghiep_api.Controllers
 
             user.FullName = request.FullName;
             user.PhoneNumber = request.PhoneNumber;
+            
+            if (!string.IsNullOrEmpty(request.Dob)) {
+                if (DateTime.TryParse(request.Dob, out DateTime dobDate)) {
+                    user.Dob = dobDate.ToUniversalTime(); // Hoặc cấu hình timezone cho phù hợp, tránh lỗi Postgres
+                }
+            } else {
+                user.Dob = null;
+            }
+
+            user.IdCard = request.IdCard;
+            user.Gender = request.Gender;
+            user.City = request.City;
+            user.District = request.District;
+            user.Address = request.Address;
 
             await _context.SaveChangesAsync();
             return Ok(new { message = "Cập nhật hồ sơ thành công" });

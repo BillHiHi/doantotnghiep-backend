@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using doantotnghiep_api.Data;
@@ -11,9 +12,11 @@ using doantotnghiep_api.Data;
 namespace doantotnghiep_api.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260404045906_AddEarlyScreeningToShowtimes")]
+    partial class AddEarlyScreeningToShowtimes
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -402,19 +405,7 @@ namespace doantotnghiep_api.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("UserId"));
 
-                    b.Property<string>("Address")
-                        .HasColumnType("text");
-
-                    b.Property<string>("City")
-                        .HasColumnType("text");
-
                     b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp without time zone");
-
-                    b.Property<string>("District")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime?>("Dob")
                         .HasColumnType("timestamp without time zone");
 
                     b.Property<string>("Email")
@@ -422,12 +413,6 @@ namespace doantotnghiep_api.Migrations
                         .HasColumnType("text");
 
                     b.Property<string>("FullName")
-                        .HasColumnType("text");
-
-                    b.Property<string>("Gender")
-                        .HasColumnType("text");
-
-                    b.Property<string>("IdCard")
                         .HasColumnType("text");
 
                     b.Property<string>("PasswordHash")

@@ -69,7 +69,8 @@ namespace doantotnghiep_api.Controllers
                     // Tối ưu hóa: Chỉ tính count khi cần thiết hoặc dùng JOIN
                     TotalSeats = s.Screen != null ? s.Screen.Seats.Count() : 0,
                     AvailableSeats = (s.Screen != null ? s.Screen.Seats.Count() : 0) - 
-                                     (s.Bookings != null ? s.Bookings.Count(b => b.Status == "Hoàn thành" || b.Status == "Paid") : 0)
+                                     (s.Bookings != null ? s.Bookings.Count(b => b.Status == "Hoàn thành" || b.Status == "Paid") : 0),
+                    IsEarlyScreening = s.IsEarlyScreening
                 })
                 .ToListAsync();
 
@@ -106,7 +107,8 @@ namespace doantotnghiep_api.Controllers
                     TotalSeats = _context.Seats.Count(st => st.ScreenId == s.ScreenId),
                     AvailableSeats = _context.Seats.Count(st => st.ScreenId == s.ScreenId) -
                                      (_context.Bookings.Count(b => b.ShowtimeId == s.ShowtimeId && (b.Status == "Hoàn thành" || b.Status == "Paid")) +
-                                      _context.SeatLocks.Count(sl => sl.ShowtimeId == s.ShowtimeId && sl.ExpiryTime > DateTime.UtcNow))
+                                      _context.SeatLocks.Count(sl => sl.ShowtimeId == s.ShowtimeId && sl.ExpiryTime > DateTime.UtcNow)),
+                    IsEarlyScreening = s.IsEarlyScreening
                 })
                 .FirstOrDefaultAsync();
 
@@ -206,7 +208,8 @@ namespace doantotnghiep_api.Controllers
                     TotalSeats = _context.Seats.Count(st => st.ScreenId == s.ScreenId),
                     AvailableSeats = _context.Seats.Count(st => st.ScreenId == s.ScreenId) -
                                      (_context.Bookings.Count(b => b.ShowtimeId == s.ShowtimeId && (b.Status == "Hoàn thành" || b.Status == "Paid")) +
-                                      _context.SeatLocks.Count(sl => sl.ShowtimeId == s.ShowtimeId && sl.ExpiryTime > DateTime.UtcNow))
+                                      _context.SeatLocks.Count(sl => sl.ShowtimeId == s.ShowtimeId && sl.ExpiryTime > DateTime.UtcNow)),
+                    IsEarlyScreening = s.IsEarlyScreening
                 })
                 .ToListAsync();
 
@@ -291,7 +294,8 @@ namespace doantotnghiep_api.Controllers
                 ScreenId = dto.ScreenId,
                 StartTime = newStartTime,
                 EndTime = newEndTime,
-                BasePrice = dto.BasePrice
+                BasePrice = dto.BasePrice,
+                IsEarlyScreening = dto.IsEarlyScreening
             };
 
             _context.Showtimes.Add(showtime);
@@ -343,6 +347,7 @@ namespace doantotnghiep_api.Controllers
             showtime.StartTime = newStartTime;
             showtime.EndTime = newEndTime;
             showtime.BasePrice = dto.BasePrice;
+            showtime.IsEarlyScreening = dto.IsEarlyScreening;
 
             await _context.SaveChangesAsync();
 
@@ -479,7 +484,8 @@ namespace doantotnghiep_api.Controllers
                             MovieTitle = s.Movie.Title,
                             s.BasePrice,
                             Start = s.StartTime.ToString("HH:mm"),
-                            End = s.EndTime.ToString("HH:mm")
+                            End = s.EndTime.ToString("HH:mm"),
+                            IsEarlyScreening = s.IsEarlyScreening
                         })
                         .ToList()
                 })
