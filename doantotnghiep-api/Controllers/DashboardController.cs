@@ -1,11 +1,14 @@
-﻿using doantotnghiep_api.Data;
+using doantotnghiep_api.Data;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 
 namespace doantotnghiep_api.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [Authorize] // 🔐 BẢO MẬT: Chỉ Admin mới được xem thống kê
     public class DashboardController : ControllerBase
     {
         private readonly AppDbContext _context;
@@ -16,33 +19,53 @@ namespace doantotnghiep_api.Controllers
         }
 
         // =========================================================
+        // HELPER: Lấy TheaterId từ Token hoặc Query (dành cho RBAC)
+        // =========================================================
+        private int? GetTargetTheaterId(int? queryTheaterId)
+        {
+            var role = User.FindFirstValue(ClaimTypes.Role);
+            var userTheaterIdStr = User.FindFirstValue("TheaterId");
+
+            // Nếu là Admin Rạp: Bắt buộc chỉ xem rạp của mình
+            if (role == "BRANCH_ADMIN" && int.TryParse(userTheaterIdStr, out int theaterId))
+            {
+                return theaterId;
+            }
+
+            // Nếu là Admin Tổng: Xem theo rạp được chọn (hoặc null = tất cả)
+            return queryTheaterId;
+        }
+
+        // =========================================================
         // ⭐ OVERVIEW (tổng tiền + tổng vé + phim hot nhất)
         // =========================================================
         [HttpGet("overview")]
-        public async Task<IActionResult> Overview(DateTime? from, DateTime? to)
+        public async Task<IActionResult> Overview([FromQuery] DateTime? from, [FromQuery] DateTime? to, [FromQuery] int? theaterId)
         {
             var start = from ?? DateTime.MinValue;
             var end = to ?? DateTime.MaxValue;
+            var targetTheaterId = GetTargetTheaterId(theaterId);
 
-            var bookings = _context.Bookings
+            var bookingsQuery = _context.Bookings
+                .Include(b => b.Showtime)
+                .ThenInclude(s => s.Screen)
                 .Where(b =>
                     b.Status == "Paid" &&
                     b.BookingDate >= start &&
                     b.BookingDate <= end);
 
-            var totalTickets = await bookings.CountAsync();
+            // 💡 Lọc theo rạp nếu có
+            if (targetTheaterId.HasValue)
+            {
+                bookingsQuery = bookingsQuery.Where(b => b.Showtime.Screen.TheaterId == targetTheaterId.Value);
+            }
 
-            var totalRevenue = await bookings
-                .Join(_context.Showtimes,
-                    b => b.ShowtimeId,
-                    s => s.ShowtimeId,
-                    (b, s) => s.BasePrice)
-                .SumAsync();
+            var totalTickets = await bookingsQuery.CountAsync();
 
-            var topMovie = await bookings
-                .Join(_context.Showtimes, b => b.ShowtimeId, s => s.ShowtimeId, (b, s) => s)
-                .Join(_context.Movies, s => s.MovieId, m => m.MovieId, (s, m) => m.Title)
-                .GroupBy(x => x)
+            var totalRevenue = await bookingsQuery.SumAsync(b => b.Showtime.BasePrice);
+
+            var topMovie = await bookingsQuery
+                .GroupBy(x => x.Showtime.Movie.Title)
                 .Select(g => new
                 {
                     Movie = g.Key,
@@ -60,69 +83,67 @@ namespace doantotnghiep_api.Controllers
             });
         }
 
-
         // =========================================================
         // ⭐ THỐNG KÊ THEO PHIM
         // =========================================================
         [HttpGet("movies")]
-        public async Task<IActionResult> MovieStats(DateTime? from, DateTime? to)
+        public async Task<IActionResult> MovieStats([FromQuery] DateTime? from, [FromQuery] DateTime? to, [FromQuery] int? theaterId)
         {
             var start = from ?? DateTime.MinValue;
             var end = to ?? DateTime.MaxValue;
+            var targetTheaterId = GetTargetTheaterId(theaterId);
 
-            var result = await _context.Bookings
+            var bookingsQuery = _context.Bookings
+                .Include(b => b.Showtime)
+                .ThenInclude(s => s.Screen)
                 .Where(b =>
                     b.Status == "Paid" &&
                     b.BookingDate >= start &&
-                    b.BookingDate <= end)
-                .Join(_context.Showtimes,
-                    b => b.ShowtimeId,
-                    s => s.ShowtimeId,
-                    (b, s) => new { s.MovieId, s.BasePrice })
-                .GroupBy(x => x.MovieId)
+                    b.BookingDate <= end);
+
+            if (targetTheaterId.HasValue)
+            {
+                bookingsQuery = bookingsQuery.Where(b => b.Showtime.Screen.TheaterId == targetTheaterId.Value);
+            }
+
+            var result = await bookingsQuery
+                .GroupBy(x => x.Showtime.Movie.Title)
                 .Select(g => new
                 {
-                    MovieId = g.Key,
+                    Title = g.Key,
                     Tickets = g.Count(),
-                    Revenue = g.Sum(x => x.BasePrice)
+                    Revenue = g.Sum(x => x.Showtime.BasePrice)
                 })
-                .Join(_context.Movies,
-                    x => x.MovieId,
-                    m => m.MovieId,
-                    (x, m) => new
-                    {
-                        m.Title,
-                        x.Tickets,
-                        x.Revenue
-                    })
                 .OrderByDescending(x => x.Tickets)
                 .ToListAsync();
 
             return Ok(result);
         }
 
-
         // =========================================================
         // ⭐ DOANH THU THEO NGÀY (cho chart)
         // =========================================================
         [HttpGet("revenue-by-date")]
-        public async Task<IActionResult> RevenueByDate()
+        public async Task<IActionResult> RevenueByDate([FromQuery] int? theaterId)
         {
-            var result = await _context.Bookings
-                .Where(b => b.Status == "Paid")
-                .Join(_context.Showtimes,
-                    b => b.ShowtimeId,
-                    s => s.ShowtimeId,
-                    (b, s) => new
-                    {
-                        Date = b.BookingDate.Date,
-                        s.BasePrice
-                    })
-                .GroupBy(x => x.Date)
+            var targetTheaterId = GetTargetTheaterId(theaterId);
+
+            var bookingsQuery = _context.Bookings
+                .Include(b => b.Showtime)
+                .ThenInclude(s => s.Screen)
+                .Where(b => b.Status == "Paid");
+
+            if (targetTheaterId.HasValue)
+            {
+                bookingsQuery = bookingsQuery.Where(b => b.Showtime.Screen.TheaterId == targetTheaterId.Value);
+            }
+
+            var result = await bookingsQuery
+                .GroupBy(x => x.BookingDate.Date)
                 .Select(g => new
                 {
                     Date = g.Key,
-                    Revenue = g.Sum(x => x.BasePrice)
+                    Revenue = g.Sum(x => x.Showtime.BasePrice)
                 })
                 .OrderBy(x => x.Date)
                 .ToListAsync();

@@ -1,4 +1,4 @@
-﻿using doantotnghiep_api.Data;
+using doantotnghiep_api.Data;
 using doantotnghiep_api.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -80,7 +80,7 @@ namespace doantotnghiep_api.Controllers
         // api/screens
         // =====================================================
         [HttpPost]
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN,BranchAdmin")]
         public async Task<IActionResult> CreateScreen([FromBody] Screen screen)
         {
             var theaterExists = await _context.Theaters
@@ -100,7 +100,7 @@ namespace doantotnghiep_api.Controllers
         // api/screens/5
         // =====================================================
         [HttpPut("{id}")]
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN,BranchAdmin")]
         public async Task<IActionResult> UpdateScreen(int id, [FromBody] Screen updatedScreen)
         {
             var screen = await _context.Screens.FindAsync(id);
@@ -122,7 +122,7 @@ namespace doantotnghiep_api.Controllers
         // api/screens/5
         // =====================================================
         [HttpDelete("{id}")]
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN,BranchAdmin")]
         public async Task<IActionResult> DeleteScreen(int id)
         {
             var screen = await _context.Screens.FindAsync(id);
@@ -139,7 +139,7 @@ namespace doantotnghiep_api.Controllers
         // SEED SEATS (QUICK CREATE 80 SEATS)
         // =====================================================
         [HttpPost("{id}/seed-seats")]
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN,BranchAdmin")]
         public async Task<IActionResult> SeedSeats(int id)
         {
             var screen = await _context.Screens.FindAsync(id);

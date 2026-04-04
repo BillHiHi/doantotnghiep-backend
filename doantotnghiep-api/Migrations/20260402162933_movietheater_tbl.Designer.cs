@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using doantotnghiep_api.Data;
@@ -11,9 +12,11 @@ using doantotnghiep_api.Data;
 namespace doantotnghiep_api.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260402162933_movietheater_tbl")]
+    partial class movietheater_tbl
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -420,12 +423,7 @@ namespace doantotnghiep_api.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<int?>("TheaterId")
-                        .HasColumnType("integer");
-
                     b.HasKey("UserId");
-
-                    b.HasIndex("TheaterId");
 
                     b.ToTable("Users");
                 });
@@ -513,15 +511,6 @@ namespace doantotnghiep_api.Migrations
                         .IsRequired();
 
                     b.Navigation("Movie");
-
-                    b.Navigation("Theater");
-                });
-
-            modelBuilder.Entity("doantotnghiep_api.Models.User", b =>
-                {
-                    b.HasOne("doantotnghiep_api.Models.Theater", "Theater")
-                        .WithMany()
-                        .HasForeignKey("TheaterId");
 
                     b.Navigation("Theater");
                 });

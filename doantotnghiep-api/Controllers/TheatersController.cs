@@ -20,6 +20,36 @@ namespace doantotnghiep_api.Controllers
         // =========================
         // Lấy tất cả rạp
         // =========================
+        [HttpGet("all-theaters")]
+        [AllowAnonymous]
+        public async Task<IActionResult> GetAllTheaters()
+        {
+            try
+            {
+                // Lấy danh sách tất cả rạp từ database
+                var theaters = await _context.Theaters
+                    .Select(t => new {
+                        t.TheaterId,
+                        t.Name,
+                        t.Address,
+                        t.City
+                    })
+                    .ToListAsync();
+
+                if (theaters == null || !theaters.Any())
+                {
+                    return NotFound("Không tìm thấy rạp nào.");
+                }
+
+                return Ok(theaters);
+            }
+            catch (Exception ex)
+            {
+                // Trả về lỗi nếu có vấn đề trong quá trình truy vấn
+                return StatusCode(500, $"Lỗi server: {ex.Message}");
+            }
+        }
+
         [HttpGet]
         [AllowAnonymous]
         [ResponseCache(Duration = 300)] // Cache 5 phút cho tất cả
@@ -56,7 +86,7 @@ namespace doantotnghiep_api.Controllers
         // Thêm rạp mới
         // =========================
         [HttpPost]
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN,BranchAdmin")]
         public async Task<IActionResult> CreateTheater([FromBody] Theater theater)
         {
             if (!ModelState.IsValid)
@@ -72,7 +102,7 @@ namespace doantotnghiep_api.Controllers
         // Cập nhật rạp
         // =========================
         [HttpPut("{id}")]
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN,BranchAdmin")]
         public async Task<IActionResult> UpdateTheater(int id, [FromBody] Theater updatedTheater)
         {
             if (id != updatedTheater.TheaterId)
@@ -96,7 +126,7 @@ namespace doantotnghiep_api.Controllers
         // Xóa rạp
         // =========================
         [HttpDelete("{id}")]
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN,BranchAdmin")]
         public async Task<IActionResult> DeleteTheater(int id)
         {
             var theater = await _context.Theaters.FindAsync(id);
@@ -110,7 +140,7 @@ namespace doantotnghiep_api.Controllers
         }
 
         // =========================
-        // Lấy phim theo rạp
+        // Lấy phim theo rạp (Những phim ĐÃ CÓ suất chiếu)
         // =========================
         [HttpGet("{theaterId}/movies")]
         [AllowAnonymous]
@@ -123,6 +153,28 @@ namespace doantotnghiep_api.Controllers
                 .Select(s => s.Movie)
                 .Distinct()
                 .ToListAsync();
+
+            return Ok(movies);
+        }
+
+        // =========================
+        // 🍿 Lấy danh sách phim ĐƯỢC PHÂN PHỐI cho rạp (Để tạo suất chiếu)
+        // =========================
+        [HttpGet("{theaterId}/available-movies")]
+        [AllowAnonymous]
+        public async Task<IActionResult> GetAvailableMovies(int theaterId)
+        {
+            var movies = await _context.TheaterMovies
+                .Where(tm => tm.TheaterId == theaterId)
+                .Include(tm => tm.Movie)
+                .Select(tm => tm.Movie)
+                .ToListAsync();
+
+            // Nếu rạp chưa được phân phối phim nào cụ thể, trả về tất cả phim (Dự phòng)
+            if (!movies.Any())
+            {
+                return Ok(await _context.Movies.ToListAsync());
+            }
 
             return Ok(movies);
         }
@@ -171,6 +223,26 @@ namespace doantotnghiep_api.Controllers
                 .ToListAsync();
 
             return Ok(showtimes);
+        }
+        // =========================
+        // Lấy rạp theo khu vực (Grouped by City)
+        // =========================
+        [HttpGet("grouped")]
+        [AllowAnonymous]
+        public async Task<IActionResult> GetTheatersByGroup()
+        {
+            var data = await _context.Theaters
+                .AsNoTracking()
+                .GroupBy(t => t.City)
+                .Select(g => new {
+                    province = g.Key,
+                    theaters = g.Select(t => new {
+                        id = t.TheaterId,
+                        name = t.Name
+                    }).ToList()
+                })
+                .ToListAsync();
+            return Ok(data);
         }
     }
 }

@@ -19,14 +19,29 @@ namespace doantotnghiep_api.Controllers
             _context = context;
         }
 
+        // 💡 RBAC HELPER: Lấy TheaterId của người dùng hiện tại từ Token
+        private int? UserTheaterId => int.TryParse(User.Claims.FirstOrDefault(c => c.Type == "TheaterId")?.Value, out var id) ? id : null;
+        private bool IsBranchAdmin => User.IsInRole("BRANCH_ADMIN");
+        private bool IsSuperAdmin => User.IsInRole("SUPER_ADMIN") || User.IsInRole("Admin");
+
         // =====================================================
         // GET ALL
         // =====================================================
         [HttpGet]
         [AllowAnonymous]
-        public async Task<IActionResult> GetAll(DateTime? from, DateTime? to)
+        public async Task<IActionResult> GetAll([FromQuery] DateTime? from, [FromQuery] DateTime? to, [FromQuery] int? theaterId)
         {
             var query = _context.Showtimes.AsNoTracking();
+
+            // 💡 RBAC LỌC THEO RẠP
+            if (IsBranchAdmin && UserTheaterId.HasValue)
+            {
+                query = query.Where(s => s.Screen.TheaterId == UserTheaterId.Value);
+            }
+            else if (IsSuperAdmin && theaterId.HasValue)
+            {
+                query = query.Where(s => s.Screen.TheaterId == theaterId.Value);
+            }
 
             if (from.HasValue)
                 query = query.Where(s => s.StartTime >= from.Value);
@@ -240,9 +255,16 @@ namespace doantotnghiep_api.Controllers
         // CREATE
         // =====================================================
         [HttpPost]
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN")]
         public async Task<IActionResult> Create(CreateShowtimeDto dto)
         {
+            // 💡 KIỂM TRA PHÂN QUYỀN TRÊN SCREEN
+            var screen = await _context.Screens.FindAsync(dto.ScreenId);
+            if (screen == null) return BadRequest("Room not found");
+
+            if (IsBranchAdmin && UserTheaterId.HasValue && screen.TheaterId != UserTheaterId.Value)
+                return Forbid("Bạn không có quyền quản lý phòng chiếu của rạp khác");
+
             var movie = await _context.Movies.FindAsync(dto.MovieId);
             if (movie == null)
                 return BadRequest("Movie not found");
@@ -282,12 +304,18 @@ namespace doantotnghiep_api.Controllers
         // UPDATE
         // =====================================================
         [HttpPut("{id}")]
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN")]
         public async Task<IActionResult> Update(int id, UpdateShowtimeDto dto)
         {
-            var showtime = await _context.Showtimes.FindAsync(id);
-            if (showtime == null)
-                return NotFound();
+            var showtime = await _context.Showtimes
+                .Include(s => s.Screen)
+                .FirstOrDefaultAsync(s => s.ShowtimeId == id);
+            
+            if (showtime == null) return NotFound();
+
+            // 💡 CHẶN LỖI PHÂN QUYỀN
+            if (IsBranchAdmin && UserTheaterId.HasValue && showtime.Screen.TheaterId != UserTheaterId.Value)
+                return Forbid("Bạn không có quyền sửa suất chiếu rạp khác");
 
             var movie = await _context.Movies.FindAsync(dto.MovieId);
             if (movie == null)
@@ -325,12 +353,18 @@ namespace doantotnghiep_api.Controllers
         // DELETE
         // =====================================================
         [HttpDelete("{id}")]
-        [Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN")]
         public async Task<IActionResult> Delete(int id)
         {
-            var showtime = await _context.Showtimes.FindAsync(id);
-            if (showtime == null)
-                return NotFound();
+            var showtime = await _context.Showtimes
+                .Include(s => s.Screen)
+                .FirstOrDefaultAsync(s => s.ShowtimeId == id);
+
+            if (showtime == null) return NotFound();
+
+            // 💡 CHẶN LỖI PHÂN QUYỀN
+            if (IsBranchAdmin && UserTheaterId.HasValue && showtime.Screen.TheaterId != UserTheaterId.Value)
+                return Forbid("Bạn không có quyền xóa suất chiếu rạp khác");
 
             _context.Showtimes.Remove(showtime);
             await _context.SaveChangesAsync();
@@ -339,7 +373,7 @@ namespace doantotnghiep_api.Controllers
         }
 
         // =====================================================
-        // GET SEATS (Đã dọn dẹp Git Conflict và tối ưu an toàn)
+        // GET SEATS (TỐI ƯU HÓA ĐỈNH CAO - 1 DB ROUNDTRIP)
         // =====================================================
         [HttpGet("{id}/seats")]
         [AllowAnonymous]
@@ -347,64 +381,57 @@ namespace doantotnghiep_api.Controllers
         {
             try
             {
-                // 1. Lấy thông tin suất chiếu
-                var showtime = await _context.Showtimes
+                // Sử dụng Navigation Property (s.Screen.Showtimes) để gộp 4 truy vấn làm 1.
+                // Đẩy toàn bộ logic kiểm tra "ghế đã bán" và "ghế đang khóa" xuống Database PostgreSQL
+                var seatsData = await _context.Seats
                     .AsNoTracking()
-                    .Where(s => s.ShowtimeId == id)
-                    .Select(s => new { s.ScreenId })
-                    .FirstOrDefaultAsync();
+                    // 1. Chỉ lấy ghế của phòng có suất chiếu mang ID này
+                    .Where(s => s.Screen.Showtimes.Any(st => st.ShowtimeId == id))
+                    .Select(s => new
+                    {
+                        Seat = s,
 
-                if (showtime == null)
-                    return NotFound(new { detail = $"Không tìm thấy suất chiếu ID {id}" });
+                        // 2. Sub-query (EXISTS in SQL): Kiểm tra ghế đã bán chưa
+                        IsBooked = _context.Bookings.Any(b =>
+                            b.SeatId == s.SeatId &&
+                            b.ShowtimeId == id &&
+                            (b.Status == "Hoàn thành" || b.Status == "Paid")),
 
-                // 2. Lấy danh sách ghế của phòng này
-                var seats = await _context.Seats
-                    .AsNoTracking()
-                    .Where(s => s.ScreenId == showtime.ScreenId)
+                        // 3. Sub-query: Lấy UserId đang khóa ghế này (nếu có)
+                        LockerId = _context.SeatLocks
+                            .Where(l =>
+                                l.SeatId == s.SeatId &&
+                                l.ShowtimeId == id &&
+                                l.ExpiryTime > DateTime.UtcNow)
+                            .Select(l => (int?)l.UserId)
+                            .FirstOrDefault()
+                    })
+                    // Nhờ DB sắp xếp luôn cho nhẹ RAM backend
+                    .OrderBy(x => x.Seat.RowNumber ?? "Unknown")
+                    .ThenBy(x => x.Seat.SeatNumber)
                     .ToListAsync();
 
-                if (seats == null || !seats.Any())
+                if (!seatsData.Any())
                 {
-                    // Nếu không có ghế, trả về mảng rỗng thay vì lỗi
                     return Ok(new List<object>());
                 }
 
-                // 3. Lấy thông tin vé đã bán
-                var bookedIds = await _context.Bookings
-                    .AsNoTracking()
-                    .Where(b => b.ShowtimeId == id && (b.Status == "Hoàn thành" || b.Status == "Paid"))
-                    .Select(b => b.SeatId)
-                    .ToListAsync();
-
-                var bookedSet = bookedIds.ToHashSet();
-
-                // 4. Lấy thông tin ghế đang bị khóa (giữ ghế tạm thời)
-                var lockedList = await _context.SeatLocks
-                    .AsNoTracking()
-                    .Where(l => l.ShowtimeId == id && l.ExpiryTime > DateTime.UtcNow)
-                    .Select(l => new { l.SeatId, l.UserId })
-                    .ToListAsync();
-
-                var lockedLookup = lockedList.ToLookup(l => l.SeatId, l => l.UserId);
-
-                // 5. Nhóm ghế theo hàng và map ra cấu trúc JSON
-                var result = seats
-                    .OrderBy(s => s.RowNumber ?? "Unknown")
-                    .ThenBy(s => s.SeatNumber)
-                    .GroupBy(s => s.RowNumber ?? "Unknown")
+                // 4. Nhóm ghế theo hàng ngay trên RAM của C# (lúc này list data đã cực kỳ nhỏ gọn)
+                var result = seatsData
+                    .GroupBy(x => x.Seat.RowNumber ?? "Unknown")
                     .Select(g => new
                     {
                         Row = g.Key,
-                        Seats = g.Select(s => new
+                        Seats = g.Select(x => new
                         {
-                            Id = s.SeatId,
-                            Code = $"{(s.RowNumber ?? "Unknown")}{s.SeatNumber}",
-                            Type = (s.SeatType ?? "Standard").ToLower(),
-                            Status =
-                                bookedSet.Contains(s.SeatId) ? "booked" :
-                                lockedLookup.Contains(s.SeatId) ? "locked" :
-                                "available",
-                            LockerId = lockedLookup.Contains(s.SeatId) ? lockedLookup[s.SeatId].FirstOrDefault() : 0
+                            Id = x.Seat.SeatId,
+                            Code = $"{(x.Seat.RowNumber ?? "Unknown")}{x.Seat.SeatNumber}",
+                            Type = (x.Seat.SeatType ?? "Standard").ToLower(),
+                            // Render status cực nhanh vì đã xử lý ở Database
+                            Status = x.IsBooked ? "booked" :
+                                     x.LockerId.HasValue ? "locked" :
+                                     "available",
+                            LockerId = x.LockerId ?? 0
                         }).ToList()
                     })
                     .ToList();
@@ -413,13 +440,10 @@ namespace doantotnghiep_api.Controllers
             }
             catch (Exception ex)
             {
-                // Bắt lỗi chi tiết
                 return StatusCode(500, new
                 {
-                    error = "Lỗi nghiêm trọng khi load ghế",
-                    detail = ex.Message,
-                    inner = ex.InnerException?.Message,
-                    stack = ex.StackTrace
+                    error = "Lỗi khi load ghế",
+                    detail = ex.Message
                 });
             }
         }
