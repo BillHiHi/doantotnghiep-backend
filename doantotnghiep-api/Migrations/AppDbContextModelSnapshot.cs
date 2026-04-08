@@ -82,7 +82,7 @@ namespace doantotnghiep_api.Migrations
 
                     b.HasKey("MovieId");
 
-                    b.ToTable("Movies");
+                    b.ToTable("Movies", (string)null);
                 });
 
             modelBuilder.Entity("doantotnghiep_api.Models.Banner", b =>
@@ -111,7 +111,7 @@ namespace doantotnghiep_api.Migrations
 
                     b.HasKey("BannerId");
 
-                    b.ToTable("Banners");
+                    b.ToTable("Banners", (string)null);
                 });
 
             modelBuilder.Entity("doantotnghiep_api.Models.Bookings", b =>
@@ -155,7 +155,7 @@ namespace doantotnghiep_api.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("Bookings");
+                    b.ToTable("Bookings", (string)null);
                 });
 
             modelBuilder.Entity("doantotnghiep_api.Models.Foods", b =>
@@ -183,7 +183,7 @@ namespace doantotnghiep_api.Migrations
 
                     b.HasKey("FoodId");
 
-                    b.ToTable("Foods");
+                    b.ToTable("Foods", (string)null);
                 });
 
             modelBuilder.Entity("doantotnghiep_api.Models.PointTransaction", b =>
@@ -211,7 +211,7 @@ namespace doantotnghiep_api.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("PointTransactions");
+                    b.ToTable("PointTransactions", (string)null);
                 });
 
             modelBuilder.Entity("doantotnghiep_api.Models.Promotion", b =>
@@ -250,7 +250,7 @@ namespace doantotnghiep_api.Migrations
 
                     b.HasKey("PromotionId");
 
-                    b.ToTable("Promotions");
+                    b.ToTable("Promotions", (string)null);
                 });
 
             modelBuilder.Entity("doantotnghiep_api.Models.Screen", b =>
@@ -276,7 +276,7 @@ namespace doantotnghiep_api.Migrations
 
                     b.HasIndex("TheaterId");
 
-                    b.ToTable("Screens");
+                    b.ToTable("Screens", (string)null);
                 });
 
             modelBuilder.Entity("doantotnghiep_api.Models.Seat", b =>
@@ -307,7 +307,7 @@ namespace doantotnghiep_api.Migrations
 
                     b.HasIndex("ScreenId");
 
-                    b.ToTable("Seats");
+                    b.ToTable("Seats", (string)null);
                 });
 
             modelBuilder.Entity("doantotnghiep_api.Models.SeatLock", b =>
@@ -344,7 +344,7 @@ namespace doantotnghiep_api.Migrations
 
                     b.HasKey("LockId");
 
-                    b.ToTable("SeatLocks");
+                    b.ToTable("SeatLocks", (string)null);
                 });
 
             modelBuilder.Entity("doantotnghiep_api.Models.Showtime", b =>
@@ -379,7 +379,7 @@ namespace doantotnghiep_api.Migrations
 
                     b.HasIndex("ScreenId");
 
-                    b.ToTable("Showtimes");
+                    b.ToTable("Showtimes", (string)null);
                 });
 
             modelBuilder.Entity("doantotnghiep_api.Models.Theater", b =>
@@ -404,7 +404,7 @@ namespace doantotnghiep_api.Migrations
 
                     b.HasKey("TheaterId");
 
-                    b.ToTable("Theaters");
+                    b.ToTable("Theaters", (string)null);
                 });
 
             modelBuilder.Entity("doantotnghiep_api.Models.TheaterMovie", b =>
@@ -419,7 +419,7 @@ namespace doantotnghiep_api.Migrations
 
                     b.HasIndex("TheaterId");
 
-                    b.ToTable("TheaterMovies");
+                    b.ToTable("TheaterMovies", (string)null);
                 });
 
             modelBuilder.Entity("doantotnghiep_api.Models.User", b =>
@@ -479,7 +479,7 @@ namespace doantotnghiep_api.Migrations
 
                     b.HasIndex("TheaterId");
 
-                    b.ToTable("Users");
+                    b.ToTable("Users", (string)null);
                 });
 
             modelBuilder.Entity("doantotnghiep_api.Models.UserVoucher", b =>
@@ -508,7 +508,7 @@ namespace doantotnghiep_api.Migrations
 
                     b.HasIndex("VoucherId");
 
-                    b.ToTable("UserVouchers");
+                    b.ToTable("UserVouchers", (string)null);
                 });
 
             modelBuilder.Entity("doantotnghiep_api.Models.Voucher", b =>
@@ -551,7 +551,7 @@ namespace doantotnghiep_api.Migrations
 
                     b.HasKey("VoucherId");
 
-                    b.ToTable("Vouchers");
+                    b.ToTable("Vouchers", (string)null);
                 });
 
             modelBuilder.Entity("doantotnghiep_api.Models.Bookings", b =>
