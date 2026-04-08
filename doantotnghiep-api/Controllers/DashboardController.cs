@@ -2,87 +2,78 @@ using doantotnghiep_api.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using System.Security.Claims;
 
 namespace doantotnghiep_api.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
-    [Authorize] // 🔐 BẢO MẬT: Chỉ Admin mới được xem thống kê
+    [Authorize]
     public class DashboardController : ControllerBase
     {
         private readonly AppDbContext _context;
+        public DashboardController(AppDbContext context) => _context = context;
 
-        public DashboardController(AppDbContext context)
-        {
-            _context = context;
-        }
-
-        // =========================================================
-        // HELPER: Lấy TheaterId từ Token hoặc Query (dành cho RBAC)
-        // =========================================================
-        // =========================================================
+        // ─────────────────────────────────────────────────────────
+        // HELPER: RBAC — lấy TheaterId theo role
+        // ─────────────────────────────────────────────────────────
         private int? GetTargetTheaterId(int? queryTheaterId)
         {
-            var roleClaim = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.Role || c.Type == "role");
-            var role = roleClaim?.Value?.ToUpper();
-            
-            var theaterIdClaim = User.Claims.FirstOrDefault(c => c.Type == "TheaterId");
-            var userTheaterIdStr = theaterIdClaim?.Value;
+            var role = User.Claims
+                .FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.Role || c.Type == "role")
+                ?.Value?.ToUpper();
+            var userTheaterIdStr = User.Claims
+                .FirstOrDefault(c => c.Type == "TheaterId")?.Value;
 
-            if ((role == "BRANCH_ADMIN") && int.TryParse(userTheaterIdStr, out int theaterId))
-            {
-                return theaterId;
-            }
+            if (role == "BRANCH_ADMIN" && int.TryParse(userTheaterIdStr, out int tid))
+                return tid;
 
             return queryTheaterId;
         }
 
-        // =========================================================
-        // ⭐ OVERVIEW (tổng tiền + tổng vé + phim hot nhất)
-        // =========================================================
+        // ─────────────────────────────────────────────────────────
+        // HELPER: điều kiện status hợp lệ (dùng chung)
+        // ─────────────────────────────────────────────────────────
+        private static bool ValidStatus(string? s) =>
+            s != null && (s.ToLower() == "paid" || s.ToLower() == "collected" || s.ToLower() == "hoàn thành");
+
+        // ─────────────────────────────────────────────────────────
+        // GET /overview
+        // Tổng doanh thu + vé + F&B + phim hot nhất
+        // ─────────────────────────────────────────────────────────
         [HttpGet("overview")]
-        public async Task<IActionResult> Overview([FromQuery] DateTime? from, [FromQuery] DateTime? to, [FromQuery] int? theaterId)
+        public async Task<IActionResult> Overview(
+            [FromQuery] DateTime? from,
+            [FromQuery] DateTime? to,
+            [FromQuery] int? theaterId)
         {
             var start = from ?? new DateTime(2020, 1, 1);
             var end = to ?? DateTime.Now.AddDays(1);
-            var targetTheaterId = GetTargetTheaterId(theaterId);
+            var tid = GetTargetTheaterId(theaterId);
 
-            var bookingsQuery = _context.Bookings
+            var q = _context.Bookings
                 .Include(b => b.Showtime.Screen)
                 .Include(b => b.Showtime.Movie)
-                .Where(b =>
-                    ((b.Status ?? "").ToLower() == "paid" || (b.Status ?? "").ToLower() == "collected" || (b.Status ?? "").ToLower() == "hoàn thành") &&
-                    b.BookingDate >= start &&
-                    b.BookingDate <= end);
+                .Where(b => ValidStatus(b.Status) && b.BookingDate >= start && b.BookingDate <= end);
 
-            if (targetTheaterId.HasValue)
-            {
-                bookingsQuery = bookingsQuery.Where(b => b.Showtime.Screen.TheaterId == targetTheaterId.Value);
-            }
+            if (tid.HasValue)
+                q = q.Where(b => b.Showtime.Screen.TheaterId == tid.Value);
 
-            var totalTickets = await bookingsQuery.CountAsync();
-            
-            // 💡 FIX: Chỉ lấy TotalAmount 1 lần cho mỗi PaymentCode để tránh nhân bản doanh thu
-            var distinctBookings = await bookingsQuery
+            var totalTickets = await q.CountAsync();
+
+            var distinctBookings = await q
                 .GroupBy(b => b.PaymentCode)
-                .Select(g => new { 
+                .Select(g => new {
                     TotalAmount = g.Max(x => x.TotalAmount),
                     TicketPriceTotal = g.Sum(x => x.Showtime != null ? (decimal?)x.Showtime.BasePrice : 0) ?? 0
                 })
                 .ToListAsync();
 
             var totalAmount = distinctBookings.Sum(x => x.TotalAmount);
-            var totalRevenue = await bookingsQuery.SumAsync(b => (decimal?)b.Showtime.BasePrice) ?? 0;
-            var totalFnb = totalAmount - totalRevenue;
+            var totalRevenue = await q.SumAsync(b => (decimal?)b.Showtime.BasePrice) ?? 0;
 
-            var topMovie = await bookingsQuery
+            var topMovie = await q
                 .GroupBy(x => x.Showtime.Movie.Title)
-                .Select(g => new
-                {
-                    Movie = g.Key,
-                    Tickets = g.Count()
-                })
+                .Select(g => new { Movie = g.Key, Tickets = g.Count() })
                 .OrderByDescending(x => x.Tickets)
                 .FirstOrDefaultAsync();
 
@@ -90,105 +81,125 @@ namespace doantotnghiep_api.Controllers
             {
                 TotalRevenue = totalRevenue,
                 TotalAmount = totalAmount,
-                TotalFnb = totalFnb > 0 ? totalFnb : 0,
+                TotalFnb = Math.Max(0, totalAmount - totalRevenue),
                 TotalTickets = totalTickets,
                 TopMovie = topMovie?.Movie ?? "N/A",
                 TopMovieTickets = topMovie?.Tickets ?? 0
             });
         }
 
-        // =========================================================
-        // ⭐ TOP RẠP DOANH THU (Dành cho Admin Hệ Thống)
-        // =========================================================
-        [HttpGet("top-theaters")]
-        public async Task<IActionResult> TopTheaters([FromQuery] DateTime? from, [FromQuery] DateTime? to)
+        // ─────────────────────────────────────────────────────────
+        // GET /theater-stats
+        // Từng rạp: doanh thu + vé + phim bán chạy nhất
+        // ✅ Thay thế hoàn toàn cho /top-theaters (đã xoá)
+        // ─────────────────────────────────────────────────────────
+        [HttpGet("theater-stats")]
+        public async Task<IActionResult> TheaterStats(
+            [FromQuery] DateTime? from,
+            [FromQuery] DateTime? to)
         {
             var start = from ?? new DateTime(2020, 1, 1);
             var end = to ?? DateTime.Now.AddDays(1);
 
-            var result = await _context.Bookings
-                .Include(b => b.Showtime.Screen.Theater)
-                .Where(b => ((b.Status ?? "").ToLower() == "paid" || (b.Status ?? "").ToLower() == "collected" || (b.Status ?? "").ToLower() == "hoàn thành") && b.BookingDate >= start && b.BookingDate <= end)
-                .Where(b => b.Showtime != null && b.Showtime.Screen != null && b.Showtime.Screen.Theater != null)
-                .GroupBy(b => new { TheaterName = b.Showtime.Screen.Theater.Name, b.PaymentCode })
-                .Select(g => new
-                {
-                    TheaterName = g.Key.TheaterName ?? "N/A",
-                    PaymentCode = g.Key.PaymentCode,
-                    OrderAmount = g.Max(x => x.TotalAmount),
-                    TicketCount = g.Count()
+            var bookings = await _context.Bookings
+                .AsNoTracking()
+                .Include(b => b.Showtime).ThenInclude(s => s.Screen).ThenInclude(sc => sc.Theater)
+                .Include(b => b.Showtime).ThenInclude(s => s.Movie)
+                .Where(b =>
+                    ValidStatus(b.Status) &&
+                    b.BookingDate >= start && b.BookingDate <= end &&
+                    b.Showtime != null &&
+                    b.Showtime.Screen != null &&
+                    b.Showtime.Screen.Theater != null)
+                .ToListAsync();
+
+            var result = bookings
+                .GroupBy(b => new {
+                    TheaterId = b.Showtime.Screen.TheaterId,
+                    TheaterName = b.Showtime.Screen.Theater.Name
                 })
-                .GroupBy(x => x.TheaterName)
-                .Select(g => new
+                .Select(g =>
                 {
-                    Theater = g.Key,
-                    Revenue = g.Sum(x => x.OrderAmount),
-                    Tickets = g.Sum(x => x.TicketCount)
+                    var revenue = g
+                        .GroupBy(b => b.PaymentCode ?? b.BookingId.ToString())
+                        .Sum(pg => pg.Max(x => x.TotalAmount));
+
+                    var topMovie = g
+                        .GroupBy(b => b.Showtime?.Movie?.Title ?? "N/A")
+                        .Select(mg => new { Title = mg.Key, Tickets = mg.Count() })
+                        .OrderByDescending(x => x.Tickets)
+                        .FirstOrDefault();
+
+                    return new
+                    {
+                        TheaterId = g.Key.TheaterId,
+                        TheaterName = g.Key.TheaterName,
+                        Revenue = revenue,
+                        TotalTickets = g.Count(),
+                        TopMovie = topMovie?.Title ?? "N/A",
+                        TopMovieTickets = topMovie?.Tickets ?? 0,
+                        ShowtimeCount = g.Select(b => b.ShowtimeId).Distinct().Count()
+                    };
                 })
                 .OrderByDescending(x => x.Revenue)
-                .Take(5)
-                .ToListAsync();
+                .ToList();
 
             return Ok(result);
         }
 
-        // =========================================================
-        // ⭐ THỂ LOẠI PHIM (Cho Pie Chart)
-        // =========================================================
+        // ─────────────────────────────────────────────────────────
+        // GET /genres
+        // Tỉ trọng thể loại phim (Pie chart)
+        // ─────────────────────────────────────────────────────────
         [HttpGet("genres")]
-        public async Task<IActionResult> GenreStats([FromQuery] DateTime? from, [FromQuery] DateTime? to, [FromQuery] int? theaterId)
+        public async Task<IActionResult> GenreStats(
+            [FromQuery] DateTime? from,
+            [FromQuery] DateTime? to,
+            [FromQuery] int? theaterId)
         {
             var start = from ?? DateTime.MinValue;
             var end = to ?? DateTime.MaxValue;
-            var targetTheaterId = GetTargetTheaterId(theaterId);
+            var tid = GetTargetTheaterId(theaterId);
 
-            var query = _context.Bookings
+            var q = _context.Bookings
                 .Include(b => b.Showtime.Movie)
                 .Include(b => b.Showtime.Screen)
-                .Where(b => ((b.Status ?? "").ToLower() == "paid" || (b.Status ?? "").ToLower() == "collected" || (b.Status ?? "").ToLower() == "hoàn thành") && b.BookingDate >= start && b.BookingDate <= end);
+                .Where(b => ValidStatus(b.Status) && b.BookingDate >= start && b.BookingDate <= end);
 
-            if (targetTheaterId.HasValue)
-            {
-                query = query.Where(b => b.Showtime.Screen.TheaterId == targetTheaterId.Value);
-            }
+            if (tid.HasValue)
+                q = q.Where(b => b.Showtime.Screen.TheaterId == tid.Value);
 
-            var result = await query
+            var result = await q
                 .GroupBy(x => x.Showtime.Movie.Genre ?? "Khác")
-                .Select(g => new
-                {
-                    Genre = g.Key,
-                    Tickets = g.Count()
-                })
+                .Select(g => new { Genre = g.Key, Tickets = g.Count() })
                 .OrderByDescending(x => x.Tickets)
                 .ToListAsync();
 
             return Ok(result);
         }
 
-        // =========================================================
-        // ⭐ THỐNG KÊ THEO PHIM
-        // =========================================================
+        // ─────────────────────────────────────────────────────────
+        // GET /movies
+        // Xếp hạng phim theo vé bán + doanh thu
+        // ─────────────────────────────────────────────────────────
         [HttpGet("movies")]
-        public async Task<IActionResult> MovieStats([FromQuery] DateTime? from, [FromQuery] DateTime? to, [FromQuery] int? theaterId)
+        public async Task<IActionResult> MovieStats(
+            [FromQuery] DateTime? from,
+            [FromQuery] DateTime? to,
+            [FromQuery] int? theaterId)
         {
             var start = from ?? DateTime.MinValue;
             var end = to ?? DateTime.MaxValue;
-            var targetTheaterId = GetTargetTheaterId(theaterId);
+            var tid = GetTargetTheaterId(theaterId);
 
-            var bookingsQuery = _context.Bookings
-                .Include(b => b.Showtime)
-                .ThenInclude(s => s.Screen)
-                .Where(b =>
-                    ((b.Status ?? "").ToLower() == "paid" || (b.Status ?? "").ToLower() == "collected" || (b.Status ?? "").ToLower() == "hoàn thành") &&
-                    b.BookingDate >= start &&
-                    b.BookingDate <= end);
+            var q = _context.Bookings
+                .Include(b => b.Showtime).ThenInclude(s => s.Screen)
+                .Where(b => ValidStatus(b.Status) && b.BookingDate >= start && b.BookingDate <= end);
 
-            if (targetTheaterId.HasValue)
-            {
-                bookingsQuery = bookingsQuery.Where(b => b.Showtime.Screen.TheaterId == targetTheaterId.Value);
-            }
+            if (tid.HasValue)
+                q = q.Where(b => b.Showtime.Screen.TheaterId == tid.Value);
 
-            var result = await bookingsQuery
+            var result = await q
                 .GroupBy(x => x.Showtime.Movie.Title)
                 .Select(g => new
                 {
@@ -202,97 +213,83 @@ namespace doantotnghiep_api.Controllers
             return Ok(result);
         }
 
-        // =========================================================
-        // ⭐ DOANH THU THEO NGÀY (cho chart)
-        // =========================================================
+        // ─────────────────────────────────────────────────────────
+        // GET /revenue-by-date
+        // Doanh thu theo ngày (Line chart)
+        // ─────────────────────────────────────────────────────────
         [HttpGet("revenue-by-date")]
-        public async Task<IActionResult> RevenueByDate([FromQuery] DateTime? from, [FromQuery] DateTime? to, [FromQuery] int? theaterId)
+        public async Task<IActionResult> RevenueByDate(
+            [FromQuery] DateTime? from,
+            [FromQuery] DateTime? to,
+            [FromQuery] int? theaterId)
         {
             var start = from ?? DateTime.MinValue;
             var end = to ?? DateTime.MaxValue;
-            var targetTheaterId = GetTargetTheaterId(theaterId);
+            var tid = GetTargetTheaterId(theaterId);
 
-            var bookingsQuery = _context.Bookings
-                .Include(b => b.Showtime)
-                .ThenInclude(s => s.Screen)
-                .Where(b => ((b.Status ?? "").ToLower() == "paid" || (b.Status ?? "").ToLower() == "collected" || (b.Status ?? "").ToLower() == "hoàn thành") && b.BookingDate >= start && b.BookingDate <= end);
+            var q = _context.Bookings
+                .Include(b => b.Showtime).ThenInclude(s => s.Screen)
+                .Where(b => ValidStatus(b.Status) && b.BookingDate >= start && b.BookingDate <= end && b.Showtime != null);
 
-            if (targetTheaterId.HasValue)
-            {
-                bookingsQuery = bookingsQuery.Where(b => b.Showtime.Screen.TheaterId == targetTheaterId.Value);
-            }
+            if (tid.HasValue)
+                q = q.Where(b => b.Showtime.Screen.TheaterId == tid.Value);
 
-            var result = await bookingsQuery
-                .Where(b => b.Showtime != null)
+            var result = await q
                 .GroupBy(b => new { Date = b.BookingDate.Date, b.PaymentCode })
-                .Select(g => new
-                {
-                    Date = g.Key.Date,
-                    PaymentCode = g.Key.PaymentCode,
-                    Amount = g.Max(x => x.TotalAmount)
-                })
+                .Select(g => new { g.Key.Date, Amount = g.Max(x => x.TotalAmount) })
                 .GroupBy(x => x.Date)
-                .Select(g => new
-                {
-                    Date = g.Key,
-                    Revenue = g.Sum(x => x.Amount)
-                })
+                .Select(g => new { Date = g.Key, Revenue = g.Sum(x => x.Amount) })
                 .OrderBy(x => x.Date)
                 .ToListAsync();
 
             return Ok(result);
         }
-        // =========================================================
-        // ⭐ GIAO DỊCH GẦN NHẤT
-        // =========================================================
+
+        // ─────────────────────────────────────────────────────────
+        // GET /recent
+        // 20 giao dịch gần nhất
+        // ─────────────────────────────────────────────────────────
         [HttpGet("recent")]
         public async Task<IActionResult> RecentOrders(
-           [FromQuery] DateTime? from,
-           [FromQuery] DateTime? to,
-           [FromQuery] int? theaterId)
+            [FromQuery] DateTime? from,
+            [FromQuery] DateTime? to,
+            [FromQuery] int? theaterId)
         {
             var start = from ?? new DateTime(2020, 1, 1);
             var end = to ?? DateTime.Now.AddDays(1);
-            var targetTheaterId = GetTargetTheaterId(theaterId);
+            var tid = GetTargetTheaterId(theaterId);
 
-            var query = _context.Bookings
+            var q = _context.Bookings
                 .AsNoTracking()
                 .Include(b => b.User)
-                .Include(b => b.Showtime)
-                    .ThenInclude(s => s.Movie)
-                .Include(b => b.Showtime)
-                    .ThenInclude(s => s.Screen)
-                        .ThenInclude(sc => sc.Theater)
+                .Include(b => b.Showtime).ThenInclude(s => s.Movie)
+                .Include(b => b.Showtime).ThenInclude(s => s.Screen).ThenInclude(sc => sc.Theater)
                 .Where(b => b.BookingDate >= start && b.BookingDate <= end);
 
-            if (targetTheaterId.HasValue)
-                query = query.Where(b => b.Showtime.Screen.TheaterId == targetTheaterId.Value);
+            if (tid.HasValue)
+                q = q.Where(b => b.Showtime.Screen.TheaterId == tid.Value);
 
-            var grouped = await query
-                .OrderByDescending(b => b.BookingDate)
-                .ToListAsync();
+            var raw = await q.OrderByDescending(b => b.BookingDate).ToListAsync();
 
-            var result = grouped
+            var result = raw
                 .GroupBy(b => b.PaymentCode ?? b.BookingId.ToString())
                 .Take(20)
                 .Select(g =>
                 {
-                    var first = g.First();
+                    var f = g.First();
                     return new
                     {
-                        Code = first.PaymentCode ?? first.BookingId.ToString(),
-                        Movie = first.Showtime?.Movie?.Title ?? "N/A",
-                        // ✅ Ưu tiên FullName, fallback về Email
-                        CustomerName = first.User?.FullName ?? first.User?.Email ?? "Khách",
-                        Status = first.Status ?? "unknown",
-                        Poster = first.Showtime?.Movie?.PosterUrl ?? null,
-                        Time = first.BookingDate
+                        Code = f.PaymentCode ?? f.BookingId.ToString(),
+                        Movie = f.Showtime?.Movie?.Title ?? "N/A",
+                        CustomerName = f.User?.FullName ?? f.User?.Email ?? "Khách",
+                        Status = f.Status ?? "unknown",
+                        Poster = f.Showtime?.Movie?.PosterUrl,
+                        Time = f.BookingDate
                     };
                 })
                 .ToList();
 
             return Ok(result);
         }
-
     }
 }

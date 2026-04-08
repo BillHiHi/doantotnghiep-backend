@@ -67,6 +67,7 @@ namespace doantotnghiep_api.Controllers
                     MovieTitle = s.Movie != null ? s.Movie.Title : "N/A",
                     ScreenId = s.ScreenId,
                     ScreenName = s.Screen != null ? s.Screen.ScreenName : "N/A",
+                    TheaterName = s.Screen != null && s.Screen.Theater != null ? s.Screen.Theater.Name : "N/A",
                     StartTime = s.StartTime,
                     EndTime = s.EndTime,
                     TheaterId = s.Screen != null ? s.Screen.TheaterId : 0,
