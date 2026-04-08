@@ -57,14 +57,14 @@ namespace doantotnghiep_api.Controllers
 
         private bool IsBranchAdmin {
              get {
-                var role = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.Role)?.Value?.ToUpper();
+                var role = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.Role || c.Type == "role")?.Value?.ToUpper();
                 return role == "BRANCH_ADMIN" || role == "BRANCHADMIN";
              }
         }
         
         private bool IsSuperAdmin {
             get {
-                var role = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.Role)?.Value?.ToUpper();
+                var role = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.Role || c.Type == "role")?.Value?.ToUpper();
                 return role == "SUPER_ADMIN" || role == "ADMIN";
             }
         }
@@ -702,7 +702,7 @@ namespace doantotnghiep_api.Controllers
                             code = first.PaymentCode,
                             customerName = first.User?.FullName ?? "Khách hàng",
                             movie = first.Showtime?.Movie?.Title ?? "Phim",
-                            time = first.Showtime?.StartTime.ToString("HH:mm"),
+                            time = first.Showtime != null ? first.Showtime.StartTime.ToString("HH:mm") : "N/A",
                             status = first.Status == "Paid" ? "PAID" : (first.Status == "Collected" ? "COLLECTED" : first.Status)
                         };
                     })

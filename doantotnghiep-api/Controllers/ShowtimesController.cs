@@ -24,14 +24,14 @@ namespace doantotnghiep_api.Controllers
         
         private bool IsBranchAdmin {
              get {
-                var role = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.Role)?.Value?.ToUpper();
+                var role = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.Role || c.Type == "role")?.Value?.ToUpper();
                 return role == "BRANCH_ADMIN" || role == "BRANCHADMIN";
              }
         }
         
         private bool IsSuperAdmin {
             get {
-                var role = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.Role)?.Value?.ToUpper();
+                var role = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.Role || c.Type == "role")?.Value?.ToUpper();
                 return role == "SUPER_ADMIN" || role == "ADMIN";
             }
         }
@@ -71,17 +71,16 @@ namespace doantotnghiep_api.Controllers
                 {
                     ShowtimeId = s.ShowtimeId,
                     MovieId = s.MovieId,
-                    MovieTitle = s.Movie.Title,
+                    MovieTitle = s.Movie != null ? s.Movie.Title : "N/A",
                     ScreenId = s.ScreenId,
-                    ScreenName = s.Screen.ScreenName,
+                    ScreenName = s.Screen != null ? s.Screen.ScreenName : "N/A",
                     StartTime = s.StartTime,
                     EndTime = s.EndTime,
-                    TheaterId = s.Screen.TheaterId,
+                    TheaterId = s.Screen != null ? s.Screen.TheaterId : 0,
                     BasePrice = s.BasePrice,
-                    // Tối ưu hóa: Chỉ tính count khi cần thiết hoặc dùng JOIN
                     TotalSeats = s.Screen != null ? s.Screen.Seats.Count() : 0,
                     AvailableSeats = (s.Screen != null ? s.Screen.Seats.Count() : 0) - 
-                                     (s.Bookings != null ? s.Bookings.Count(b => b.Status == "Hoàn thành" || b.Status == "Paid") : 0),
+                                     (s.Bookings != null ? s.Bookings.Count(b => (b.Status ?? "").ToLower() == "hoàn thành" || (b.Status ?? "").ToLower() == "paid") : 0),
                     IsEarlyScreening = s.IsEarlyScreening
                 })
                 .ToListAsync();

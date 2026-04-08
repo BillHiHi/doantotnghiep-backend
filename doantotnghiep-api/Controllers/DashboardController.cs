@@ -23,8 +23,11 @@ namespace doantotnghiep_api.Controllers
         // =========================================================
         private int? GetTargetTheaterId(int? queryTheaterId)
         {
-            var role = User.FindFirstValue(ClaimTypes.Role)?.ToUpper();
-            var userTheaterIdStr = User.FindFirstValue("TheaterId");
+            var roleClaim = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.Role || c.Type == "role");
+            var role = roleClaim?.Value?.ToUpper();
+            
+            var theaterIdClaim = User.Claims.FirstOrDefault(c => c.Type == "TheaterId");
+            var userTheaterIdStr = theaterIdClaim?.Value;
 
             if ((role == "BRANCH_ADMIN" || role == "BRANCHADMIN") && int.TryParse(userTheaterIdStr, out int theaterId))
             {
@@ -40,17 +43,15 @@ namespace doantotnghiep_api.Controllers
         [HttpGet("overview")]
         public async Task<IActionResult> Overview([FromQuery] DateTime? from, [FromQuery] DateTime? to, [FromQuery] int? theaterId)
         {
-            var start = from ?? DateTime.MinValue;
-            var end = to ?? DateTime.MaxValue;
+            var start = from ?? new DateTime(2020, 1, 1);
+            var end = to ?? DateTime.Now.AddDays(1);
             var targetTheaterId = GetTargetTheaterId(theaterId);
 
             var bookingsQuery = _context.Bookings
-                .Include(b => b.Showtime)
-                .ThenInclude(s => s.Screen)
-                .Include(b => b.Showtime)
-                .ThenInclude(s => s.Movie)
+                .Include(b => b.Showtime.Screen)
+                .Include(b => b.Showtime.Movie)
                 .Where(b =>
-                    (b.Status.ToLower() == "paid" || b.Status.ToLower() == "collected") &&
+                    ((b.Status ?? "").ToLower() == "paid" || (b.Status ?? "").ToLower() == "collected" || (b.Status ?? "").ToLower() == "hoàn thành") &&
                     b.BookingDate >= start &&
                     b.BookingDate <= end);
 
@@ -65,8 +66,8 @@ namespace doantotnghiep_api.Controllers
             var distinctBookings = await bookingsQuery
                 .GroupBy(b => b.PaymentCode)
                 .Select(g => new { 
-                    TotalAmount = g.FirstOrDefault().TotalAmount,
-                    TicketPriceTotal = g.Sum(x => (decimal?)x.Showtime.BasePrice) ?? 0
+                    TotalAmount = g.Max(x => x.TotalAmount),
+                    TicketPriceTotal = g.Sum(x => x.Showtime != null ? (decimal?)x.Showtime.BasePrice : 0) ?? 0
                 })
                 .ToListAsync();
 
@@ -101,24 +102,25 @@ namespace doantotnghiep_api.Controllers
         [HttpGet("top-theaters")]
         public async Task<IActionResult> TopTheaters([FromQuery] DateTime? from, [FromQuery] DateTime? to)
         {
-            var start = from ?? DateTime.MinValue;
-            var end = to ?? DateTime.MaxValue;
+            var start = from ?? new DateTime(2020, 1, 1);
+            var end = to ?? DateTime.Now.AddDays(1);
 
             var result = await _context.Bookings
                 .Include(b => b.Showtime.Screen.Theater)
-                .Where(b => (b.Status.ToLower() == "paid" || b.Status.ToLower() == "collected") && b.BookingDate >= start && b.BookingDate <= end)
-                .GroupBy(b => new { b.Showtime.Screen.Theater.Name, b.PaymentCode })
+                .Where(b => ((b.Status ?? "").ToLower() == "paid" || (b.Status ?? "").ToLower() == "collected" || (b.Status ?? "").ToLower() == "hoàn thành") && b.BookingDate >= start && b.BookingDate <= end)
+                .Where(b => b.Showtime != null && b.Showtime.Screen != null && b.Showtime.Screen.Theater != null)
+                .GroupBy(b => new { TheaterName = b.Showtime.Screen.Theater.Name, b.PaymentCode })
                 .Select(g => new
                 {
-                    TheaterName = g.Key.Name,
+                    TheaterName = g.Key.TheaterName ?? "N/A",
                     PaymentCode = g.Key.PaymentCode,
-                    OrderAmount = g.FirstOrDefault().TotalAmount,
+                    OrderAmount = g.Max(x => x.TotalAmount),
                     TicketCount = g.Count()
                 })
                 .GroupBy(x => x.TheaterName)
                 .Select(g => new
                 {
-                    Theater = g.Key ?? "N/A",
+                    Theater = g.Key,
                     Revenue = g.Sum(x => x.OrderAmount),
                     Tickets = g.Sum(x => x.TicketCount)
                 })
@@ -142,7 +144,7 @@ namespace doantotnghiep_api.Controllers
             var query = _context.Bookings
                 .Include(b => b.Showtime.Movie)
                 .Include(b => b.Showtime.Screen)
-                .Where(b => (b.Status.ToLower() == "paid" || b.Status.ToLower() == "collected") && b.BookingDate >= start && b.BookingDate <= end);
+                .Where(b => ((b.Status ?? "").ToLower() == "paid" || (b.Status ?? "").ToLower() == "collected" || (b.Status ?? "").ToLower() == "hoàn thành") && b.BookingDate >= start && b.BookingDate <= end);
 
             if (targetTheaterId.HasValue)
             {
@@ -176,7 +178,7 @@ namespace doantotnghiep_api.Controllers
                 .Include(b => b.Showtime)
                 .ThenInclude(s => s.Screen)
                 .Where(b =>
-                    (b.Status.ToLower() == "paid" || b.Status.ToLower() == "collected") &&
+                    ((b.Status ?? "").ToLower() == "paid" || (b.Status ?? "").ToLower() == "collected" || (b.Status ?? "").ToLower() == "hoàn thành") &&
                     b.BookingDate >= start &&
                     b.BookingDate <= end);
 
@@ -212,7 +214,7 @@ namespace doantotnghiep_api.Controllers
             var bookingsQuery = _context.Bookings
                 .Include(b => b.Showtime)
                 .ThenInclude(s => s.Screen)
-                .Where(b => (b.Status.ToLower() == "paid" || b.Status.ToLower() == "collected") && b.BookingDate >= start && b.BookingDate <= end);
+                .Where(b => ((b.Status ?? "").ToLower() == "paid" || (b.Status ?? "").ToLower() == "collected" || (b.Status ?? "").ToLower() == "hoàn thành") && b.BookingDate >= start && b.BookingDate <= end);
 
             if (targetTheaterId.HasValue)
             {
@@ -220,12 +222,13 @@ namespace doantotnghiep_api.Controllers
             }
 
             var result = await bookingsQuery
-                .GroupBy(b => new { b.BookingDate.Date, b.PaymentCode })
+                .Where(b => b.Showtime != null)
+                .GroupBy(b => new { Date = b.BookingDate.Date, b.PaymentCode })
                 .Select(g => new
                 {
                     Date = g.Key.Date,
                     PaymentCode = g.Key.PaymentCode,
-                    Amount = g.FirstOrDefault().TotalAmount
+                    Amount = g.Max(x => x.TotalAmount)
                 })
                 .GroupBy(x => x.Date)
                 .Select(g => new
