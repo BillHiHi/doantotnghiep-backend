@@ -35,11 +35,9 @@ namespace doantotnghiep_api.Controllers
         {
             var query = _context.Movies.AsNoTracking().AsQueryable();
 
-            if (activeOnly)
-            {
-                var now = DateTime.Now;
-                query = query.Where(m => m.ReleaseDate <= now && (!m.EndDate.HasValue || m.EndDate.Value >= now));
-            }
+            // 💡 GIẢM BỚT ĐIỀU KIỆN LỌC: 
+            // Cho phép phim "Sắp chiếu" hiện lên nếu được phân phối cho rạp này
+            query = query.Where(m => m.Status != "Hidden" && m.Status != "Cancelled");
 
             // Đếm tổng số lượng record trước khi phân trang để frontend làm giao diện
             var totalRecords = await query.CountAsync();
@@ -93,11 +91,9 @@ namespace doantotnghiep_api.Controllers
                 .Where(m => m.TheaterMovies.Any(tm => tm.TheaterId == theaterId))
                 .AsNoTracking();
 
-            if (activeOnly)
-            {
-                var now = DateTime.Now;
-                query = query.Where(m => m.ReleaseDate <= now && (!m.EndDate.HasValue || m.EndDate.Value >= now));
-            }
+            // 💡 GIẢM BỚT ĐIỀU KIỆN LỌC: 
+            // Cho phép phim "Sắp chiếu" hiện lên nếu được phân phối cho rạp này
+            query = query.Where(m => m.Status != "Hidden" && m.Status != "Cancelled");
 
             var movies = await query.OrderByDescending(x => x.ReleaseDate).ToListAsync();
 

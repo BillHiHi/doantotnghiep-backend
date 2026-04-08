@@ -1,4 +1,4 @@
-﻿using doantotnghiep_api.Models;
+using doantotnghiep_api.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Internal;
 
@@ -41,6 +41,9 @@ namespace doantotnghiep_api.Data
         public DbSet<Foods> Foods { get; set; }
         public DbSet<Promotion> Promotions { get; set; }
         public DbSet<TheaterMovie> TheaterMovies { get; set; }
+        public DbSet<PointTransaction> PointTransactions { get; set; }
+        public DbSet<Voucher> Vouchers { get; set; }
+        public DbSet<UserVoucher> UserVouchers { get; set; }
 
     }
 }

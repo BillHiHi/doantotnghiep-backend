@@ -26,6 +26,7 @@ namespace doantotnghiep_api.Models
 
         public string Role { get; set; } = "User";
         public int? TheaterId { get; set; }
+        public int Points { get; set; } = 0;
 
         [ForeignKey("TheaterId")]
         public virtual Theater? Theater { get; set; }

@@ -31,8 +31,43 @@ namespace doantotnghiep_api.Controllers
 
         // 💡 RBAC HELPER: Lấy TheaterId của người dùng hiện tại từ Token
         private int? UserTheaterId => int.TryParse(User.Claims.FirstOrDefault(c => c.Type == "TheaterId")?.Value, out var id) ? id : null;
-        private bool IsBranchAdmin => User.IsInRole("BRANCH_ADMIN");
-        private bool IsSuperAdmin => User.IsInRole("SUPER_ADMIN") || User.IsInRole("Admin");
+        
+        private async Task AwardPoints(int userId, decimal totalAmount, string description)
+        {
+            var user = await _context.Users.FindAsync(userId);
+            if (user != null)
+            {
+                // Mỗi lần đặt vé được tích 10 điểm (Để test)
+                int points = 10;
+                
+                user.Points += points;
+
+                var transaction = new PointTransaction
+                {
+                    UserId = userId,
+                    Points = points,
+                    Description = description,
+                    TransactionDate = DateTime.UtcNow
+                };
+
+                _context.PointTransactions.Add(transaction);
+                await _context.SaveChangesAsync();
+            }
+        }
+
+        private bool IsBranchAdmin {
+             get {
+                var role = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.Role)?.Value?.ToUpper();
+                return role == "BRANCH_ADMIN" || role == "BRANCHADMIN";
+             }
+        }
+        
+        private bool IsSuperAdmin {
+            get {
+                var role = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.Role)?.Value?.ToUpper();
+                return role == "SUPER_ADMIN" || role == "ADMIN";
+            }
+        }
 
         // =============================================
         // HOLD SEAT
@@ -210,6 +245,7 @@ namespace doantotnghiep_api.Controllers
                         myLock.PaymentCode = paymentCode;
                         myLock.TotalAmount = dto.TotalAmount;
                         myLock.Combos = dto.Combos;
+                        myLock.UserVoucherId = dto.UserVoucherId;
                     }
                     else
                     {
@@ -222,7 +258,8 @@ namespace doantotnghiep_api.Controllers
                             ExpiryTime = now.AddMinutes(15),
                             PaymentCode = paymentCode,
                             TotalAmount = dto.TotalAmount,
-                            Combos = dto.Combos
+                            Combos = dto.Combos,
+                            UserVoucherId = dto.UserVoucherId
                         };
                         _context.SeatLocks.Add(seatLock);
                     }
@@ -298,7 +335,8 @@ namespace doantotnghiep_api.Controllers
                     Status = "Paid",
                     TotalAmount = lockSeat.TotalAmount ?? 0,
                     PaymentCode = lockSeat.PaymentCode,
-                    Combos = lockSeat.Combos
+                    Combos = lockSeat.Combos,
+                    UserVoucherId = lockSeat.UserVoucherId
                 };
 
                 _context.Bookings.Add(booking);
@@ -306,15 +344,27 @@ namespace doantotnghiep_api.Controllers
 
                 await _context.SaveChangesAsync();
 
-                // GỬI EMAIL XÁC NHẬN (Khi ghế cuối cùng trong cùng 1 mã thanh toán được xác nhận)
-                var remainingLocks = await _context.SeatLocks.AnyAsync(x => 
+                // GỬI EMAIL & TÍCH ĐIỂM (Khi ghế cuối cùng trong cùng 1 mã thanh toán được xác nhận)
+                var isLastSeat = !await _context.SeatLocks.AnyAsync(x => 
                     x.UserId == request.UserId && 
                     x.ShowtimeId == request.ShowtimeId && 
                     x.PaymentCode == paymentCode);
 
-                if (!remainingLocks)
+                if (isLastSeat)
                 {
-                    // Chạy task gửi email mà không làm chậm request chính
+                    // Tích điểm chỉ một lần cho toàn bộ đơn hàng (10 điểm như yêu cầu)
+                    await AwardPoints(request.UserId, 10, $"Tích điểm đặt vé (Mã: {paymentCode})");
+
+                    // Đánh dấu voucher đã sử dụng
+                    if (lockSeat.UserVoucherId.HasValue) {
+                        var uv = await _context.UserVouchers.FindAsync(lockSeat.UserVoucherId.Value);
+                        if (uv != null) {
+                            uv.IsUsed = true;
+                            uv.UsedAt = DateTime.UtcNow;
+                        }
+                    }
+
+                    // Chạy task gửi email & tích điểm mà không làm chậm request chính
                     _ = Task.Run(async () => {
                         try {
                             using (var scope = _serviceProvider.CreateScope())
@@ -426,13 +476,30 @@ namespace doantotnghiep_api.Controllers
                         Status = "Paid",
                         TotalAmount = lockItem.TotalAmount ?? 0,
                         PaymentCode = lockItem.PaymentCode,
-                        Combos = lockItem.Combos
+                        Combos = lockItem.Combos,
+                        UserVoucherId = lockItem.UserVoucherId
                     };
                     _context.Bookings.Add(booking);
                 }
 
                 // 3. Xoá lock
                 _context.SeatLocks.RemoveRange(lockedSeats);
+
+                // 4. Tích điểm (Cộng 10 điểm cho mỗi đơn hàng như yêu cầu)
+                if (lockedSeats.Any()) {
+                     await AwardPoints(request.UserId, 10, $"Tích điểm đặt vé (Mã: {request.PaymentCode})");
+                     
+                     // Đánh dấu voucher đã sử dụng
+                     var firstLock = lockedSeats.First();
+                     if (firstLock.UserVoucherId.HasValue) {
+                         var uv = await _context.UserVouchers.FindAsync(firstLock.UserVoucherId.Value);
+                         if (uv != null) {
+                             uv.IsUsed = true;
+                             uv.UsedAt = DateTime.UtcNow;
+                         }
+                     }
+                }
+
                 await _context.SaveChangesAsync();
 
                 // 4. GỬI EMAIL XÁC NHẬN (logic giống bên webhook)
@@ -675,9 +742,16 @@ namespace doantotnghiep_api.Controllers
                     booking.Status = "Collected";
                 }
 
-                await _context.SaveChangesAsync();
+                // Tích điểm khi nhận vé (Nếu trước đó chưa được tích - đề phòng trường hợp lỗi tích điểm lúc thanh toán)
+                var userId = bookings.First().UserId;
+                var hasPoints = await _context.PointTransactions.AnyAsync(p => p.UserId == userId && p.Description.Contains(paymentCode));
+                if (!hasPoints)
+                {
+                    await AwardPoints(userId, 10, $"Tích điểm khi nhận vé (Mã: {paymentCode})");
+                }
 
-                return Ok(new { success = true, message = "Phát vé bộ phận thành công" });
+                await _context.SaveChangesAsync();
+                return Ok(new { success = true, message = "Phát vé thành công và đã tích điểm" });
             }
             catch (Exception ex)
             {

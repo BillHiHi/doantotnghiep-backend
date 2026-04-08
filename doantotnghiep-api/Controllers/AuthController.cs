@@ -173,6 +173,7 @@ namespace doantotnghiep_api.Controllers
                 user.City,
                 user.District,
                 user.Address,
+                user.Points,
                 user.CreatedAt
             });
         }

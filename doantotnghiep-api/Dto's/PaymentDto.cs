@@ -7,6 +7,7 @@ namespace doantotnghiep_api.Dto_s
         public List<int> SeatIds { get; set; } = new();
         public decimal TotalAmount { get; set; }
         public string? Combos { get; set; } // JSON bắp nước
+        public int? UserVoucherId { get; set; } // ⭐ NEW
     }
 
     public class PaymentResultDto

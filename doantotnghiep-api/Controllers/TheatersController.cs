@@ -170,13 +170,56 @@ namespace doantotnghiep_api.Controllers
                 .Select(tm => tm.Movie)
                 .ToListAsync();
 
-            // Nếu rạp chưa được phân phối phim nào cụ thể, trả về tất cả phim (Dự phòng)
-            if (!movies.Any())
-            {
-                return Ok(await _context.Movies.ToListAsync());
-            }
-
+            // CHẾ ĐỘ NGHIÊM KHẮC: Chỉ hiện những phim đã được Admin phân phối.
+            // Nếu muốn hiện tất cả nếu trống, hãy uncomment code cũ.
             return Ok(movies);
+        }
+
+        // =========================
+        // 🔗 PHÂN PHỐI PHIM CHO RẠP (API MỚI)
+        // =========================
+        [HttpPost("{theaterId}/distribute")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN")]
+        public async Task<IActionResult> DistributeMovies(int theaterId, [FromBody] List<int> movieIds)
+        {
+            var theater = await _context.Theaters.FindAsync(theaterId);
+            if (theater == null) return NotFound("Rạp không tồn tại");
+
+            // Xóa các liên kết cũ (Nếu muốn ghi đè) hoặc chỉ thêm cái mới
+            // Ở đây mình chọn chỉ thêm cái mới để an toàn
+            var existingIds = await _context.TheaterMovies
+                .Where(tm => tm.TheaterId == theaterId)
+                .Select(tm => tm.MovieId)
+                .ToListAsync();
+
+            var newMovies = movieIds.Except(existingIds).Select(mId => new TheaterMovie
+            {
+                TheaterId = theaterId,
+                MovieId = mId
+            });
+
+            _context.TheaterMovies.AddRange(newMovies);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = $"Đã phân phối {newMovies.Count()} phim mới cho rạp {theater.Name}" });
+        }
+
+        // =========================
+        // ❌ GỠ PHIM KHỎI RẠP (API MỚI)
+        // =========================
+        [HttpDelete("{theaterId}/movies/{movieId}")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN")]
+        public async Task<IActionResult> RemoveMovie(int theaterId, int movieId)
+        {
+            var link = await _context.TheaterMovies
+                .FirstOrDefaultAsync(tm => tm.TheaterId == theaterId && tm.MovieId == movieId);
+
+            if (link == null) return NotFound("Phim không được phân phối ở rạp này.");
+
+            _context.TheaterMovies.Remove(link);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = "Đã gỡ phim khỏi rạp thành công" });
         }
 
         // =========================

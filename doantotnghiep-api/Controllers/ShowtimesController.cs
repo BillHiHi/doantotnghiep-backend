@@ -21,8 +21,20 @@ namespace doantotnghiep_api.Controllers
 
         // 💡 RBAC HELPER: Lấy TheaterId của người dùng hiện tại từ Token
         private int? UserTheaterId => int.TryParse(User.Claims.FirstOrDefault(c => c.Type == "TheaterId")?.Value, out var id) ? id : null;
-        private bool IsBranchAdmin => User.IsInRole("BRANCH_ADMIN");
-        private bool IsSuperAdmin => User.IsInRole("SUPER_ADMIN") || User.IsInRole("Admin");
+        
+        private bool IsBranchAdmin {
+             get {
+                var role = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.Role)?.Value?.ToUpper();
+                return role == "BRANCH_ADMIN" || role == "BRANCHADMIN";
+             }
+        }
+        
+        private bool IsSuperAdmin {
+            get {
+                var role = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.Role)?.Value?.ToUpper();
+                return role == "SUPER_ADMIN" || role == "ADMIN";
+            }
+        }
 
         // =====================================================
         // GET ALL
