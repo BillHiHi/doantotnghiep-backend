@@ -146,7 +146,6 @@ app.MapHub<BookingHub>("/bookings");
 
 // HEALTH CHECK ĐỂ RENDER KIỂM TRA TRẠNG THÁI APP
 app.MapGet("/", () => "Backend Cinema API is running... 🚀");
-
 // ================= 8. AUTO MIGRATE (TỰ ĐỘNG TẠO BẢNG) =================
 // Lưu ý: Đoạn này sẽ giúp bạn tự tạo bảng trên Supabase khi deploy
 using (var scope = app.Services.CreateScope())

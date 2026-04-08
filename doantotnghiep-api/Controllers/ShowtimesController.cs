@@ -38,30 +38,23 @@ namespace doantotnghiep_api.Controllers
 
         // =====================================================
         // GET ALL
-        // =====================================================
         [HttpGet]
         [AllowAnonymous]
         public async Task<IActionResult> GetAll([FromQuery] DateTime? from, [FromQuery] DateTime? to, [FromQuery] int? theaterId)
         {
             var query = _context.Showtimes.AsNoTracking();
 
-            // 💡 RBAC LỌC THEO RẠP
             if (IsBranchAdmin && UserTheaterId.HasValue)
-            {
                 query = query.Where(s => s.Screen.TheaterId == UserTheaterId.Value);
-            }
             else if (IsSuperAdmin && theaterId.HasValue)
-            {
                 query = query.Where(s => s.Screen.TheaterId == theaterId.Value);
-            }
 
             if (from.HasValue)
                 query = query.Where(s => s.StartTime >= from.Value);
-            
+
             if (to.HasValue)
                 query = query.Where(s => s.StartTime <= to.Value);
 
-            // Nếu không có filter, mặc định lấy suất chiếu từ hôm nay trở đi để tránh tải quá nhiều
             if (!from.HasValue && !to.HasValue)
                 query = query.Where(s => s.StartTime >= DateTime.Today);
 
@@ -78,9 +71,17 @@ namespace doantotnghiep_api.Controllers
                     EndTime = s.EndTime,
                     TheaterId = s.Screen != null ? s.Screen.TheaterId : 0,
                     BasePrice = s.BasePrice,
-                    TotalSeats = s.Screen != null ? s.Screen.Seats.Count() : 0,
-                    AvailableSeats = (s.Screen != null ? s.Screen.Seats.Count() : 0) - 
-                                     (s.Bookings != null ? s.Bookings.Count(b => (b.Status ?? "").ToLower() == "hoàn thành" || (b.Status ?? "").ToLower() == "paid") : 0),
+                    TotalSeats = s.Screen != null
+                                        ? _context.Seats.Count(st => st.ScreenId == s.ScreenId)
+                                        : 0,
+                    // ✅ Dùng _context.Bookings thay vì s.Bookings để tránh null
+                    AvailableSeats = (s.Screen != null
+                                        ? _context.Seats.Count(st => st.ScreenId == s.ScreenId)
+                                        : 0)
+                                     - _context.Bookings.Count(b =>
+                                         b.ShowtimeId == s.ShowtimeId &&
+                                         (b.Status == "Hoàn thành" || b.Status == "Paid"
+                                          || b.Status == "paid" || b.Status == "collected")),
                     IsEarlyScreening = s.IsEarlyScreening
                 })
                 .ToListAsync();

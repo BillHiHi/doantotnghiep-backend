@@ -21,6 +21,7 @@ namespace doantotnghiep_api.Controllers
         // =========================================================
         // HELPER: Lấy TheaterId từ Token hoặc Query (dành cho RBAC)
         // =========================================================
+        // =========================================================
         private int? GetTargetTheaterId(int? queryTheaterId)
         {
             var roleClaim = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.Role || c.Type == "role");
@@ -29,7 +30,7 @@ namespace doantotnghiep_api.Controllers
             var theaterIdClaim = User.Claims.FirstOrDefault(c => c.Type == "TheaterId");
             var userTheaterIdStr = theaterIdClaim?.Value;
 
-            if ((role == "BRANCH_ADMIN" || role == "BRANCHADMIN") && int.TryParse(userTheaterIdStr, out int theaterId))
+            if ((role == "BRANCH_ADMIN") && int.TryParse(userTheaterIdStr, out int theaterId))
             {
                 return theaterId;
             }
@@ -241,5 +242,57 @@ namespace doantotnghiep_api.Controllers
 
             return Ok(result);
         }
+        // =========================================================
+        // ⭐ GIAO DỊCH GẦN NHẤT
+        // =========================================================
+        [HttpGet("recent")]
+        public async Task<IActionResult> RecentOrders(
+           [FromQuery] DateTime? from,
+           [FromQuery] DateTime? to,
+           [FromQuery] int? theaterId)
+        {
+            var start = from ?? new DateTime(2020, 1, 1);
+            var end = to ?? DateTime.Now.AddDays(1);
+            var targetTheaterId = GetTargetTheaterId(theaterId);
+
+            var query = _context.Bookings
+                .AsNoTracking()
+                .Include(b => b.User)
+                .Include(b => b.Showtime)
+                    .ThenInclude(s => s.Movie)
+                .Include(b => b.Showtime)
+                    .ThenInclude(s => s.Screen)
+                        .ThenInclude(sc => sc.Theater)
+                .Where(b => b.BookingDate >= start && b.BookingDate <= end);
+
+            if (targetTheaterId.HasValue)
+                query = query.Where(b => b.Showtime.Screen.TheaterId == targetTheaterId.Value);
+
+            var grouped = await query
+                .OrderByDescending(b => b.BookingDate)
+                .ToListAsync();
+
+            var result = grouped
+                .GroupBy(b => b.PaymentCode ?? b.BookingId.ToString())
+                .Take(20)
+                .Select(g =>
+                {
+                    var first = g.First();
+                    return new
+                    {
+                        Code = first.PaymentCode ?? first.BookingId.ToString(),
+                        Movie = first.Showtime?.Movie?.Title ?? "N/A",
+                        // ✅ Ưu tiên FullName, fallback về Email
+                        CustomerName = first.User?.FullName ?? first.User?.Email ?? "Khách",
+                        Status = first.Status ?? "unknown",
+                        Poster = first.Showtime?.Movie?.PosterUrl ?? null,
+                        Time = first.BookingDate
+                    };
+                })
+                .ToList();
+
+            return Ok(result);
+        }
+
     }
 }
