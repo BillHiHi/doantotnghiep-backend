@@ -128,39 +128,51 @@ namespace doantotnghiep_api.Controllers
             return Ok();
         }
 
-        [HttpPost]
-        [Route("apply-voucher")]
+        [HttpPost("apply-voucher")]
         public async Task<IActionResult> ApplyVoucher([FromBody] ApplyRequest request)
         {
-            var userVoucher = await _context.UserVouchers
-                .Include(uv => uv.Voucher)
-                .Where(uv => uv.Voucher.Code == request.Code && uv.UserId == request.UserId && !uv.IsUsed)
-                .FirstOrDefaultAsync();
+            try
+            {
+                if (request == null || string.IsNullOrEmpty(request.Code))
+                    return BadRequest("Thông tin mã voucher không hợp lệ");
 
-            if (userVoucher == null) 
-                return BadRequest("Mã voucher không hợp lệ hoặc bạn chưa sở hữu voucher này. Hãy đổi voucher bằng điểm trước khi áp dụng!");
+                var userVoucher = await _context.UserVouchers
+                    .Include(uv => uv.Voucher)
+                    .Where(uv => uv.Voucher != null && uv.Voucher.Code == request.Code && uv.UserId == request.UserId && !uv.IsUsed)
+                    .FirstOrDefaultAsync();
 
-            var voucher = userVoucher.Voucher;
+                if (userVoucher == null || userVoucher.Voucher == null) 
+                    return BadRequest("Mã voucher không hợp lệ hoặc bạn chưa sở hữu voucher này. Hãy đổi voucher bằng điểm trước khi áp dụng!");
 
-            if (!voucher.IsActive || (voucher.ExpiryDate != null && voucher.ExpiryDate < DateTime.UtcNow))
-                return BadRequest("Voucher đã hết hạn");
+                var voucher = userVoucher.Voucher;
 
-            decimal discountAmount = 0;
-            if (voucher.VoucherType == "Ticket")
-                discountAmount = request.SeatTotal * (decimal)voucher.DiscountPercent / 100;
-            else if (voucher.VoucherType == "Water")
-                discountAmount = request.ComboTotal * (decimal)voucher.DiscountPercent / 100;
-            else // All
-                discountAmount = (request.SeatTotal + request.ComboTotal) * (decimal)voucher.DiscountPercent / 100;
+                if (!voucher.IsActive || (voucher.ExpiryDate != null && voucher.ExpiryDate < DateTime.UtcNow))
+                    return BadRequest("Voucher đã hết hạn");
 
-            return Ok(new { 
-                success = true, 
-                discountAmount, 
-                newTotal = (request.SeatTotal + request.ComboTotal) - discountAmount,
-                voucherId = voucher.VoucherId,
-                userVoucherId = userVoucher.Id,
-                title = voucher.Title
-            });
+                decimal discountAmount = 0;
+                int percent = voucher.DiscountPercent;
+
+                if (voucher.VoucherType == "Ticket")
+                    discountAmount = request.SeatTotal * (decimal)percent / 100;
+                else if (voucher.VoucherType == "Water")
+                    discountAmount = request.ComboTotal * (decimal)percent / 100;
+                else // All
+                    discountAmount = (request.SeatTotal + request.ComboTotal) * (decimal)percent / 100;
+
+                return Ok(new { 
+                    success = true, 
+                    discountAmount, 
+                    newTotal = (request.SeatTotal + request.ComboTotal) - discountAmount,
+                    voucherId = voucher.VoucherId,
+                    userVoucherId = userVoucher.Id,
+                    title = voucher.Title
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ApplyVoucher Error]: {ex}");
+                return StatusCode(500, new { message = "Lỗi hệ thống khi áp dụng voucher", error = ex.Message });
+            }
         }
 
         public class RedeemRequest {

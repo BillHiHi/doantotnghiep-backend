@@ -30,7 +30,13 @@ namespace doantotnghiep_api.Controllers
         }
 
         // 💡 RBAC HELPER: Lấy TheaterId của người dùng hiện tại từ Token
-        private int? UserTheaterId => int.TryParse(User.Claims.FirstOrDefault(c => c.Type == "TheaterId")?.Value, out var id) ? id : null;
+        private int? UserTheaterId {
+            get {
+                var claim = User.Claims.FirstOrDefault(c => c.Type == "TheaterId");
+                if (claim == null) return null;
+                return int.TryParse(claim.Value, out var id) ? id : null;
+            }
+        }
         
         private async Task AwardPoints(int userId, decimal totalAmount, string description)
         {
@@ -77,52 +83,18 @@ namespace doantotnghiep_api.Controllers
         {
             try
             {
-                if (request == null)
-                    return BadRequest("Request null");
-
+                if (request == null) return BadRequest("Request null");
                 var now = DateTime.UtcNow;
 
-                // ⭐ CHECK USER (FIX FOREIGN KEY ERROR)
-                var userExists = await _context.Users
-                    .AnyAsync(x => x.UserId == request.UserId);
-
-                if (!userExists)
-                    return BadRequest("User không tồn tại");
-
-                // cleanup expired
-                var expired = await _context.SeatLocks
-                    .Where(x => x.ExpiryTime < now)
-                    .ToListAsync();
-
+                // 1. Dọn dẹp các ghế hết hạn
+                var expired = await _context.SeatLocks.Where(x => x.ExpiryTime < now).ToListAsync();
                 if (expired.Any())
                 {
-                    try
-                    {
-                        _context.SeatLocks.RemoveRange(expired);
-                        await _context.SaveChangesAsync();
-                    }
-                    catch (DbUpdateConcurrencyException)
-                    {
-                        // Ignore if already deleted by another request
-                    }
+                    _context.SeatLocks.RemoveRange(expired);
+                    await _context.SaveChangesAsync();
                 }
 
-                // check seat
-                if (!await _context.Seats.AnyAsync(x => x.SeatId == request.SeatId))
-                    return BadRequest("Seat không tồn tại");
-
-                if (!await _context.Showtimes.AnyAsync(x => x.ShowtimeId == request.ShowtimeId))
-                    return BadRequest("Showtime không tồn tại");
-
-                // Giới hạn 8 ghế
-                var currentLocksCount = await _context.SeatLocks.CountAsync(x =>
-                    x.UserId == request.UserId &&
-                    x.ShowtimeId == request.ShowtimeId &&
-                    x.ExpiryTime > now);
-
-                if (currentLocksCount >= 8)
-                    return BadRequest("Vui lòng thanh toán để chọn thêm ghế");
-
+                // 2. Kiểm tra xem ghế đã bị ai giữ chưa
                 var existingLock = await _context.SeatLocks.FirstOrDefaultAsync(x =>
                     x.SeatId == request.SeatId &&
                     x.ShowtimeId == request.ShowtimeId &&
@@ -130,18 +102,16 @@ namespace doantotnghiep_api.Controllers
 
                 if (existingLock != null)
                 {
-                    // Nếu chính user này đang giữ ghế -> Cập nhật lại thời gian (Idempotent)
                     if (existingLock.UserId == request.UserId)
                     {
                         existingLock.ExpiryTime = now.AddMinutes(10);
                         await _context.SaveChangesAsync();
                         return Ok();
                     }
-                    
-                    // Nếu người khác đang giữ
                     return BadRequest("Seat đã bị giữ");
                 }
 
+                // 3. Giữ ghế mới
                 var seatLock = new SeatLock
                 {
                     SeatId = request.SeatId,
@@ -154,6 +124,7 @@ namespace doantotnghiep_api.Controllers
                 _context.SeatLocks.Add(seatLock);
                 await _context.SaveChangesAsync();
 
+                // 4. Notify SignalR
                 await _hub.Clients
                     .Group($"Showtime_{request.ShowtimeId}")
                     .SendAsync("ReceiveSeatStatus", request.SeatId, "Locked", request.UserId);
@@ -162,7 +133,8 @@ namespace doantotnghiep_api.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, ex.ToString());
+                Console.WriteLine($"[HoldSeats Error]: {ex}");
+                return StatusCode(500, ex.Message);
             }
         }
 
@@ -221,6 +193,8 @@ namespace doantotnghiep_api.Controllers
                 var paymentCode = "RF" + new Random().Next(100000, 999999).ToString();
                 
                 // Lock ghế ngay khi chuẩn bị thanh toán
+                decimal amountPerSeat = dto.TotalAmount / dto.SeatIds.Count;
+                
                 foreach (var seatId in dto.SeatIds)
                 {
                     // Check if already locked by someone else
@@ -241,11 +215,11 @@ namespace doantotnghiep_api.Controllers
 
                     if (myLock != null)
                     {
-                        myLock.ExpiryTime = now.AddMinutes(15); // Tăng thời gian chờ thanh toán
+                        myLock.ExpiryTime = now.AddMinutes(15); 
                         myLock.PaymentCode = paymentCode;
-                        myLock.TotalAmount = dto.TotalAmount;
-                        myLock.Combos = dto.Combos;
-                        myLock.UserVoucherId = dto.UserVoucherId;
+                        myLock.TotalAmount = amountPerSeat; // Chia đều để tránh double counting khi Sum()
+                        // myLock.Combos = dto.Combos;
+                        // myLock.UserVoucherId = dto.UserVoucherId;
                     }
                     else
                     {
@@ -257,9 +231,9 @@ namespace doantotnghiep_api.Controllers
                             LockedAt = now,
                             ExpiryTime = now.AddMinutes(15),
                             PaymentCode = paymentCode,
-                            TotalAmount = dto.TotalAmount,
-                            Combos = dto.Combos,
-                            UserVoucherId = dto.UserVoucherId
+                            TotalAmount = amountPerSeat, // Chia đều
+                            // Combos = dto.Combos,
+                            // UserVoucherId = dto.UserVoucherId
                         };
                         _context.SeatLocks.Add(seatLock);
                     }
@@ -658,61 +632,85 @@ namespace doantotnghiep_api.Controllers
         // GET RECENT TICKETS (Lịch sử giao dịch)
         // =============================================
         [HttpGet("recent")]
-        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN")]
+        [Authorize] // 🔐 Chấp nhận mọi Admin đã đăng nhập
         public async Task<IActionResult> GetRecentTickets([FromQuery] int? theaterId)
         {
             try
             {
-                var query = _context.Bookings.AsNoTracking();
-
-                // 💡 RBAC LỌC THEO RẠP
+                // 1. Xác định TheaterId mục tiêu (RBAC)
+                int? targetTheaterId = theaterId;
                 if (IsBranchAdmin && UserTheaterId.HasValue)
                 {
-                    query = query.Where(b => b.Showtime.Screen.TheaterId == UserTheaterId.Value);
-                }
-                else if (IsSuperAdmin && theaterId.HasValue)
-                {
-                    query = query.Where(b => b.Showtime.Screen.TheaterId == theaterId.Value);
+                    targetTheaterId = UserTheaterId.Value;
                 }
 
-                var recentCodes = await query
-                    .Where(b => b.PaymentCode != null)
-                    .OrderByDescending(b => b.BookingDate)
-                    .Select(b => b.PaymentCode)
-                    .Distinct()
+                // 2. Tìm 10 mã giao dịch (PaymentCode) mới nhất
+                // Chúng ta GroupBy theo PaymentCode và lấy Max BookingDate để lấy các đơn hàng mới nhất
+                var codesQuery = _context.Bookings.AsNoTracking()
+                    .Where(b => !string.IsNullOrEmpty(b.PaymentCode));
+
+                if (targetTheaterId.HasValue)
+                {
+                    codesQuery = codesQuery.Where(b => b.Showtime.Screen.TheaterId == targetTheaterId.Value);
+                }
+
+                var recentCodes = await codesQuery
+                    .GroupBy(b => b.PaymentCode)
+                    .Select(g => new { 
+                        Code = g.Key, 
+                        LatestDate = g.Max(x => x.BookingDate) 
+                    })
+                    .OrderByDescending(x => x.LatestDate)
                     .Take(10)
+                    .Select(x => x.Code)
                     .ToListAsync();
 
-                // 1. Lấy thông tin chi tiết của các payment code này trong 1 query duy nhất
+                if (recentCodes == null || !recentCodes.Any())
+                {
+                    return Ok(new List<object>());
+                }
+
+                // 3. Lấy chi tiết thông tin cho các mã này
+                // Thực hiện Join với User, Showtime, Movie để lấy thông tin hiển thị
                 var allBookings = await _context.Bookings
                     .AsNoTracking()
                     .Include(b => b.User)
                     .Include(b => b.Showtime)
                         .ThenInclude(s => s.Movie)
                     .Where(b => recentCodes.Contains(b.PaymentCode))
-                    .OrderByDescending(b => b.BookingDate)
                     .ToListAsync();
 
-                // 2. Map dữ liệu thành kết quả mong muốn, tránh lặp lại cùng 1 booking code
+                // 4. Tổ chức lại dữ liệu theo đơn hàng (Group by PaymentCode)
                 var results = allBookings
                     .GroupBy(b => b.PaymentCode)
                     .Select(g => {
-                        var first = g.First();
+                        var first = g.OrderByDescending(x => x.BookingDate).FirstOrDefault();
+                        if (first == null) return null;
+                        
+                        var movie = first.Showtime?.Movie;
                         return new {
                             code = first.PaymentCode,
                             customerName = first.User?.FullName ?? "Khách hàng",
-                            movie = first.Showtime?.Movie?.Title ?? "Phim",
+                            movie = movie?.Title ?? "Phim",
+                            poster = movie?.PosterUrl ?? "",
                             time = first.Showtime != null ? first.Showtime.StartTime.ToString("HH:mm") : "N/A",
-                            status = first.Status == "Paid" ? "PAID" : (first.Status == "Collected" ? "COLLECTED" : first.Status)
+                            status = (first.Status ?? "PAID").ToUpper()
                         };
                     })
+                    .Where(x => x != null)
                     .ToList();
 
                 return Ok(results);
             }
             catch (Exception ex)
             {
-                return StatusCode(500, ex.ToString());
+                // Log chi tiết ra Console để Admin có thể debug nếu cần
+                Console.WriteLine($"[Dashboard Error] GetRecentTickets: {ex}");
+                return StatusCode(500, new { 
+                    message = "Lỗi khi lấy danh sách giao dịch gần đây", 
+                    error = ex.Message,
+                    stack = ex.StackTrace 
+                });
             }
         }
 

@@ -15,6 +15,7 @@ namespace doantotnghiep_api.Models
         public string Status { get; set; } = "Hoàn thành";
         public string? PaymentCode { get; set; }
         public string? Combos { get; set; }
+        [System.ComponentModel.DataAnnotations.Schema.NotMapped]
         public int? UserVoucherId { get; set; } // ⭐ Lưu ID voucher người dùng áp dụng
 
         // Navigation properties

@@ -19,6 +19,8 @@ namespace doantotnghiep_api.Models
         public decimal? TotalAmount { get; set; }
 
         public string? Combos { get; set; } // ⭐ Lưu danh sách combo bắp nước (JSON)
+        
+        [System.ComponentModel.DataAnnotations.Schema.NotMapped]
         public int? UserVoucherId { get; set; } // ⭐ Lưu ID voucher người dùng áp dụng
     }
 }

@@ -84,7 +84,7 @@ namespace doantotnghiep_api.Controllers
 
             // 4. Kiểm tra số tiền khách chuyển so với tổng tiền đơn hàng
             decimal amountIn = payload.transferAmount;
-            decimal expectedAmount = lockedSeats.First().TotalAmount ?? 0;
+            decimal expectedAmount = lockedSeats.Sum(s => s.TotalAmount ?? 0);
 
             if (amountIn < expectedAmount)
             {
@@ -106,13 +106,25 @@ namespace doantotnghiep_api.Controllers
                     Status = "Paid",
                     TotalAmount = lockItem.TotalAmount ?? 0,
                     PaymentCode = lockItem.PaymentCode,
-                    Combos = lockItem.Combos
+                    // Combos = lockItem.Combos,
+                    // UserVoucherId = lockItem.UserVoucherId
                 };
                 _context.Bookings.Add(booking);
             }
 
-            // GỬI EMAIL XÁC NHẬN (Chạy ngầm bằng Task.Run)
+            // MARK VOUCHER AS USED
             var firstLock = lockedSeats.First();
+            if (firstLock.UserVoucherId.HasValue)
+            {
+                var uv = await _context.UserVouchers.FindAsync(firstLock.UserVoucherId.Value);
+                if (uv != null)
+                {
+                    uv.IsUsed = true;
+                    uv.UsedAt = DateTime.UtcNow;
+                }
+            }
+
+            // GỬI EMAIL XÁC NHẬN (Chạy ngầm bằng Task.Run)
             var seatIds = lockedSeats.Select(s => s.SeatId).ToList();
 
             _ = Task.Run(async () => {
