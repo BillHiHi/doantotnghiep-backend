@@ -1,16 +1,17 @@
 using System;
 using System.Collections.Generic;
-using doantotnghiep_api.Data;
-using doantotnghiep_api.Dto_s;
-using doantotnghiep_api.Models;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
+using doantotnghiep_api.Data;
+using doantotnghiep_api.Dto_s;
+using doantotnghiep_api.Models;
 using doantotnghiep_api.Services;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 
 namespace doantotnghiep_api.Controllers
 {
@@ -29,21 +30,27 @@ namespace doantotnghiep_api.Controllers
             _emailService = emailService;
         }
 
-        // ================= REGISTER =================
+        // ====================================================================
+        // 1️⃣ AUTHENTICATION ENDPOINTS
+        // ====================================================================
+
+        /// <summary>
+        /// Đăng ký tài khoản mới
+        /// </summary>
         [HttpPost("register")]
-        public async Task<IActionResult> Register(RegisterRequest request)
+        [AllowAnonymous]
+        public async Task<IActionResult> Register([FromBody] RegisterRequest request)
         {
             if (await _context.Users.AnyAsync(x => x.Email == request.Email))
-                return BadRequest("Email đã tồn tại");
+                return BadRequest(new { message = "Email đã tồn tại" });
 
             var user = new User
             {
                 Email = request.Email,
-                // 💡 Sử dụng BCrypt thay vì hàm Hash cũ
                 PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
                 FullName = request.FullName,
                 PhoneNumber = request.PhoneNumber,
-                Role = "User", // Mặc định là khách hàng
+                Role = "User",
                 CreatedAt = DateTime.UtcNow
             };
 
@@ -58,13 +65,17 @@ namespace doantotnghiep_api.Controllers
                 user.UserId,
                 user.Email,
                 user.FullName,
-                user.Role
+                user.Role,
+                message = "Đăng ký thành công"
             });
         }
 
-        // ================= LOGIN =================
+        /// <summary>
+        /// Đăng nhập bằng email & mật khẩu
+        /// </summary>
         [HttpPost("login")]
-        public async Task<IActionResult> Login(LoginRequest request)
+        [AllowAnonymous]
+        public async Task<IActionResult> Login([FromBody] LoginRequest request)
         {
             try
             {
@@ -73,27 +84,20 @@ namespace doantotnghiep_api.Controllers
                     .FirstOrDefaultAsync(x => x.Email == request.Email);
 
                 if (user == null)
-                {
-                    return BadRequest("Sai email hoặc mật khẩu");
-                }
+                    return BadRequest(new { message = "Sai email hoặc mật khẩu" });
 
                 bool isPasswordValid = false;
                 try
                 {
-                    // 💡 Kiểm tra bằng BCrypt.Verify
                     isPasswordValid = BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash);
                 }
                 catch (Exception)
                 {
-                    // 🚨 LỖI: Hash cũ (MD5/SHA) không tương thích với BCrypt
-                    // Ta coi như sai mật khẩu và đề nghị reset
-                    return BadRequest("Tài khoản cũ cần đặt lại mật khẩu để nâng cấp bảo mật (BCrypt).");
+                    return BadRequest(new { message = "Tài khoản cũ cần đặt lại mật khẩu để nâng cấp bảo mật" });
                 }
 
                 if (!isPasswordValid)
-                {
-                    return BadRequest("Sai email hoặc mật khẩu");
-                }
+                    return BadRequest(new { message = "Sai email hoặc mật khẩu" });
 
                 var token = GenerateJwt(user);
 
@@ -105,49 +109,122 @@ namespace doantotnghiep_api.Controllers
                     user.FullName,
                     user.Role,
                     user.TheaterId,
-                    TheaterName = user.Theater?.Name
+                    theaterName = user.Theater?.Name,
+                    message = "Đăng nhập thành công"
                 });
             }
             catch (Exception ex)
             {
-                // In lỗi chi tiết ra console server để debug
-                Console.WriteLine($"[AUTH ERROR]: {ex}");
+                Console.WriteLine($"[LOGIN ERROR]: {ex}");
                 return StatusCode(500, new { message = "Lỗi hệ thống khi đăng nhập", detail = ex.Message });
             }
         }
 
-        // ================= FORGOT PASSWORD =================
-        [HttpPost("forgot-password")]
-        public async Task<IActionResult> ForgotPassword(ForgotPasswordRequest request)
+        // ====================================================================
+        // 2️⃣ GOOGLE OAUTH ENDPOINTS
+        // ====================================================================
+
+        /// <summary>
+        /// Lấy URL đăng nhập Google
+        /// </summary>
+        [HttpGet("google-login-url")]
+        [AllowAnonymous]
+        public IActionResult GetGoogleLoginUrl()
         {
-            if (string.IsNullOrEmpty(request.Email)) return BadRequest("Email không được để trống");
+            try
+            {
+                var clientId = _config["Authentication:Google:ClientId"];
+                var redirectUri = _config["Authentication:Google:RedirectUri"]
+                    ?? "http://localhost:5173/auth/google-callback";
 
-            var trimmedEmail = request.Email.Trim().ToLower();
-            var user = await _context.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == trimmedEmail);
-            if (user == null) return NotFound("Email không tồn tại trong hệ thống");
+                var googleLoginUrl = $"https://accounts.google.com/o/oauth2/v2/auth?" +
+                    $"client_id={clientId}" +
+                    $"&redirect_uri={Uri.EscapeDataString(redirectUri)}" +
+                    $"&response_type=code" +
+                    $"&scope={Uri.EscapeDataString("openid profile email")}" +
+                    $"&access_type=offline";
 
-            string tempPassword = Guid.NewGuid().ToString().Substring(0, 8);
-
-            // 💡 Cập nhật mật khẩu tạm bằng BCrypt
-            user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(tempPassword);
-            await _context.SaveChangesAsync();
-
-            string subject = "Reset Mật Khẩu - Cinema Ticket";
-            string body = $@"
-                <div style='font-family:Arial, sans-serif; padding:20px;'>
-                    <h2>Yêu cầu khôi phục mật khẩu</h2>
-                    <p>Chào {user.FullName ?? "bạn"},</p>
-                    <p>Mật khẩu của bạn đã được đặt lại thành công.</p>
-                    <p style='font-size:18px;'>Mật khẩu tạm thời của bạn là: <strong>{tempPassword}</strong></p>
-                    <p>Vui lòng đăng nhập và đổi lại mật khẩu ngay sau đó để đảm bảo an toàn.</p>
-                </div>";
-
-            await _emailService.SendEmailAsync(user.Email, subject, body);
-
-            return Ok("Mật khẩu mới đã được gửi vào email của bạn");
+                return Ok(new
+                {
+                    loginUrl = googleLoginUrl,
+                    message = "✅ Chuyển hướng người dùng tới URL này"
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = $"❌ Lỗi: {ex.Message}" });
+            }
         }
 
-        // ================= GET PROFILE =================
+        /// <summary>
+        /// Xử lý callback từ Google OAuth
+        /// </summary>
+        [HttpPost("google-callback")]
+        [AllowAnonymous]
+        public async Task<IActionResult> GoogleCallback([FromBody] GoogleCallbackRequest request)
+        {
+            try
+            {
+                var clientId = _config["Authentication:Google:ClientId"];
+                var clientSecret = _config["Authentication:Google:ClientSecret"];
+                var redirectUri = _config["Authentication:Google:RedirectUri"]
+                    ?? "http://localhost:5173/auth/google-callback";
+
+                // 1️⃣ Trao đổi authorization code lấy access token
+                var accessToken = await ExchangeCodeForAccessToken(clientId, clientSecret, redirectUri, request.Code);
+                if (string.IsNullOrEmpty(accessToken))
+                    return BadRequest(new { message = "❌ Không thể lấy access token từ Google" });
+
+                // 2️⃣ Lấy thông tin user từ Google
+                var userData = await GetGoogleUserInfo(accessToken);
+                if (userData == null)
+                    return BadRequest(new { message = "❌ Không thể lấy thông tin user từ Google" });
+
+                // 3️⃣ Kiểm tra hoặc tạo user mới
+                var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == userData.Email);
+                if (user == null)
+                {
+                    user = new User
+                    {
+                        Email = userData.Email,
+                        FullName = userData.Name,
+                        PasswordHash = BCrypt.Net.BCrypt.HashPassword(Guid.NewGuid().ToString()),
+                        Role = "User",
+                        CreatedAt = DateTime.UtcNow
+                    };
+
+                    _context.Users.Add(user);
+                    await _context.SaveChangesAsync();
+                }
+
+                // 4️⃣ Tạo JWT token
+                var token = GenerateJwt(user);
+
+                return Ok(new
+                {
+                    token,
+                    user.UserId,
+                    user.Email,
+                    user.FullName,
+                    user.Role,
+                    user.TheaterId,
+                    message = "✅ Đăng nhập Google thành công"
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[GOOGLE AUTH ERROR]: {ex}");
+                return StatusCode(500, new { message = "❌ Lỗi hệ thống", detail = ex.Message });
+            }
+        }
+
+        // ====================================================================
+        // 3️⃣ PROFILE MANAGEMENT ENDPOINTS
+        // ====================================================================
+
+        /// <summary>
+        /// Lấy thông tin profile
+        /// </summary>
         [HttpGet("profile/{userId}")]
         [Authorize]
         public async Task<IActionResult> GetProfile(int userId)
@@ -156,7 +233,8 @@ namespace doantotnghiep_api.Controllers
                 .Include(u => u.Theater)
                 .FirstOrDefaultAsync(u => u.UserId == userId);
 
-            if (user == null) return NotFound("Người dùng không tồn tại");
+            if (user == null)
+                return NotFound(new { message = "Người dùng không tồn tại" });
 
             return Ok(new
             {
@@ -166,8 +244,8 @@ namespace doantotnghiep_api.Controllers
                 user.PhoneNumber,
                 user.Role,
                 user.TheaterId,
-                TheaterName = user.Theater?.Name,
-                Dob = user.Dob?.ToString("yyyy-MM-dd"), // Format chuẩn ISO cho component Date
+                theaterName = user.Theater?.Name,
+                dob = user.Dob?.ToString("yyyy-MM-dd"),
                 user.IdCard,
                 user.Gender,
                 user.City,
@@ -178,22 +256,27 @@ namespace doantotnghiep_api.Controllers
             });
         }
 
-        // ================= UPDATE PROFILE =================
+        /// <summary>
+        /// Cập nhật thông tin profile
+        /// </summary>
         [HttpPut("update-profile")]
         [Authorize]
         public async Task<IActionResult> UpdateProfile([FromBody] UpdateProfileRequest request)
         {
             var user = await _context.Users.FindAsync(request.UserId);
-            if (user == null) return NotFound("Người dùng không tồn tại");
+            if (user == null)
+                return NotFound(new { message = "Người dùng không tồn tại" });
 
             user.FullName = request.FullName;
             user.PhoneNumber = request.PhoneNumber;
-            
-            if (!string.IsNullOrEmpty(request.Dob)) {
-                if (DateTime.TryParse(request.Dob, out DateTime dobDate)) {
-                    user.Dob = dobDate.ToUniversalTime(); // Hoặc cấu hình timezone cho phù hợp, tránh lỗi Postgres
-                }
-            } else {
+
+            if (!string.IsNullOrEmpty(request.Dob))
+            {
+                if (DateTime.TryParse(request.Dob, out DateTime dobDate))
+                    user.Dob = dobDate.ToUniversalTime();
+            }
+            else
+            {
                 user.Dob = null;
             }
 
@@ -204,31 +287,79 @@ namespace doantotnghiep_api.Controllers
             user.Address = request.Address;
 
             await _context.SaveChangesAsync();
-            return Ok(new { message = "Cập nhật hồ sơ thành công" });
+            return Ok(new { message = "✅ Cập nhật hồ sơ thành công" });
         }
 
-        // ================= CHANGE PASSWORD =================
+        // ====================================================================
+        // 4️⃣ PASSWORD MANAGEMENT ENDPOINTS
+        // ====================================================================
+
+        /// <summary>
+        /// Đổi mật khẩu
+        /// </summary>
         [HttpPost("change-password")]
         [Authorize]
-        public async Task<IActionResult> ChangePassword(ChangePasswordRequest request)
+        public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request)
         {
             var user = await _context.Users.FindAsync(request.UserId);
-            if (user == null) return NotFound("Người dùng không tồn tại");
+            if (user == null)
+                return NotFound(new { message = "Người dùng không tồn tại" });
 
-            // 💡 Kiểm tra bằng BCrypt.Verify trước khi cho phép đổi
             if (!BCrypt.Net.BCrypt.Verify(request.OldPassword, user.PasswordHash))
-            {
-                return BadRequest("Mật khẩu cũ không chính xác");
-            }
+                return BadRequest(new { message = "Mật khẩu cũ không chính xác" });
 
-            // 💡 Cập nhật mật khẩu mới bằng BCrypt
             user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
             await _context.SaveChangesAsync();
 
-            return Ok("Đổi mật khẩu thành công");
+            return Ok(new { message = "✅ Đổi mật khẩu thành công" });
         }
 
-        // ================= HELPER: GENERATE JWT =================
+        /// <summary>
+        /// Quên mật khẩu - gửi mật khẩu tạm qua email
+        /// </summary>
+        [HttpPost("forgot-password")]
+        [AllowAnonymous]
+        public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest request)
+        {
+            if (string.IsNullOrEmpty(request.Email))
+                return BadRequest(new { message = "Email không được để trống" });
+
+            var trimmedEmail = request.Email.Trim().ToLower();
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == trimmedEmail);
+            if (user == null)
+                return NotFound(new { message = "Email không tồn tại trong hệ thống" });
+
+            string tempPassword = Guid.NewGuid().ToString().Substring(0, 8);
+            user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(tempPassword);
+            await _context.SaveChangesAsync();
+
+            string subject = "🔐 Reset Mật Khẩu - Cinema Ticket";
+            string body = $@"
+                <div style='font-family:Arial, sans-serif; padding:20px; background-color:#f5f5f5;'>
+                    <h2>Yêu cầu khôi phục mật khẩu</h2>
+                    <p>Chào <strong>{user.FullName ?? "bạn"}</strong>,</p>
+                    <p>Mật khẩu của bạn đã được đặt lại thành công.</p>
+                    <div style='background-color:#fff; padding:15px; border-radius:5px; margin:20px 0;'>
+                        <p style='font-size:14px;'>Mật khẩu tạm thời của bạn là:</p>
+                        <p style='font-size:18px; font-weight:bold; color:#007bff;'>{tempPassword}</p>
+                    </div>
+                    <p>✅ Vui lòng đăng nhập và đổi lại mật khẩu ngay sau đó để đảm bảo an toàn.</p>
+                    <hr style='margin-top:30px; border:none; border-top:1px solid #ccc;'>
+                    <p style='font-size:12px; color:#999;'>Nếu bạn không yêu cầu reset mật khẩu, vui lòng bỏ qua email này.</p>
+                </div>";
+
+            await _emailService.SendEmailAsync(user.Email, subject, body);
+
+            return Ok(new { message = "✅ Mật khẩu mới đã được gửi vào email của bạn" });
+        }
+
+        // ====================================================================
+        // 5️⃣ HELPER METHODS
+        // ====================================================================
+
+        /// <summary>
+        /// Tạo JWT token
+        /// </summary>
         private string GenerateJwt(User user)
         {
             var keyStr = _config["Jwt:Key"] ?? "SecretKeyToDefendYourAPI2026";
@@ -244,9 +375,7 @@ namespace doantotnghiep_api.Controllers
             };
 
             if (user.TheaterId.HasValue)
-            {
                 claims.Add(new Claim("TheaterId", user.TheaterId.Value.ToString()));
-            }
 
             var token = new JwtSecurityToken(
                 issuer: _config["Jwt:Issuer"],
@@ -259,6 +388,96 @@ namespace doantotnghiep_api.Controllers
             return new JwtSecurityTokenHandler().WriteToken(token);
         }
 
-        // Các hàm GetProfile, UpdateProfile giữ nguyên...
+        /// <summary>
+        /// Trao đổi authorization code lấy access token từ Google
+        /// </summary>
+        private async Task<string> ExchangeCodeForAccessToken(string clientId, string clientSecret, string redirectUri, string code)
+        {
+            try
+            {
+                using (var client = new HttpClient())
+                {
+                    var content = new FormUrlEncodedContent(new Dictionary<string, string>
+                    {
+                        { "code", code },
+                        { "client_id", clientId },
+                        { "client_secret", clientSecret },
+                        { "redirect_uri", redirectUri },
+                        { "grant_type", "authorization_code" }
+                    });
+
+                    var response = await client.PostAsync("https://oauth2.googleapis.com/token", content);
+                    if (!response.IsSuccessStatusCode)
+                        return null;
+
+                    var jsonString = await response.Content.ReadAsStringAsync();
+                    using (JsonDocument doc = JsonDocument.Parse(jsonString))
+                    {
+                        var root = doc.RootElement;
+                        return root.GetProperty("access_token").GetString();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Exchange Code Error]: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Lấy thông tin user từ Google API
+        /// </summary>
+        private async Task<GoogleUserInfo> GetGoogleUserInfo(string accessToken)
+        {
+            try
+            {
+                using (var client = new HttpClient())
+                {
+                    client.DefaultRequestHeaders.Authorization =
+                        new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+
+                    var response = await client.GetAsync("https://www.googleapis.com/oauth2/v2/userinfo");
+                    if (!response.IsSuccessStatusCode)
+                        return null;
+
+                    var jsonString = await response.Content.ReadAsStringAsync();
+                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                    return JsonSerializer.Deserialize<GoogleUserInfo>(jsonString, options);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Get Google User Info Error]: {ex.Message}");
+                return null;
+            }
+        }
+
+        // ====================================================================
+        // 6️⃣ DTO & MODEL CLASSES
+        // ====================================================================
+
+        /// <summary>
+        /// Request body cho Google OAuth callback
+        /// </summary>
+        public class GoogleCallbackRequest
+        {
+            public string Code { get; set; }
+        }
+
+        /// <summary>
+        /// Response từ Google userinfo endpoint
+        /// </summary>
+        public class GoogleUserInfo
+        {
+            [System.Text.Json.Serialization.JsonPropertyName("email")]
+            public string Email { get; set; }
+
+            [System.Text.Json.Serialization.JsonPropertyName("name")]
+            public string Name { get; set; }
+
+            [System.Text.Json.Serialization.JsonPropertyName("picture")]
+            public string Picture { get; set; }
+        }
     }
 }
