@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>doantotnghiep_api</RootNamespace>
+    <UserSecretsId>b5501226-3884-4d28-a513-a7bf635ba096</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>

@@ -128,50 +128,41 @@ namespace doantotnghiep_api.Controllers
         /// Lấy URL đăng nhập Google
         /// </summary>
         [HttpGet("google-login-url")]
-        [AllowAnonymous]
         public IActionResult GetGoogleLoginUrl()
         {
-            try
-            {
-                var clientId = _config["Authentication:Google:ClientId"];
-                var redirectUri = _config["Authentication:Google:RedirectUri"]
-                    ?? "http://localhost:5173/auth/google-callback";
+            var clientId = _config["Authentication:Google:ClientId"];
+            // Phải là FRONTEND URL - nơi Google redirect về sau khi user đăng nhập
+            var redirectUri = _config["Authentication:Google:RedirectUri"]
+                ?? "http://localhost:5173/auth/google-callback";
 
-                var googleLoginUrl = $"https://accounts.google.com/o/oauth2/v2/auth?" +
-                    $"client_id={clientId}" +
-                    $"&redirect_uri={Uri.EscapeDataString(redirectUri)}" +
-                    $"&response_type=code" +
-                    $"&scope={Uri.EscapeDataString("openid profile email")}" +
-                    $"&access_type=offline";
+            var googleLoginUrl = $"https://accounts.google.com/o/oauth2/v2/auth?" +
+                $"client_id={clientId}" +
+                $"&redirect_uri={Uri.EscapeDataString(redirectUri)}" +
+                $"&response_type=code" +
+                $"&scope={Uri.EscapeDataString("openid profile email")}";
 
-                return Ok(new
-                {
-                    loginUrl = googleLoginUrl,
-                    message = "✅ Chuyển hướng người dùng tới URL này"
-                });
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { message = $"❌ Lỗi: {ex.Message}" });
-            }
+            return Ok(new { loginUrl = googleLoginUrl });
         }
 
         /// <summary>
         /// Xử lý callback từ Google OAuth
         /// </summary>
-        [HttpPost("google-callback")]
+        [HttpGet("google/callback")]
+        [HttpPost("google/callback")]
         [AllowAnonymous]
-        public async Task<IActionResult> GoogleCallback([FromBody] GoogleCallbackRequest request)
+        public async Task<IActionResult> GoogleCallback([FromQuery] string code)
         {
             try
             {
+                if (string.IsNullOrEmpty(code))
+                    return BadRequest(new { message = "❌ Authorization code không tìm thấy" });
+
                 var clientId = _config["Authentication:Google:ClientId"];
                 var clientSecret = _config["Authentication:Google:ClientSecret"];
-                var redirectUri = _config["Authentication:Google:RedirectUri"]
-                    ?? "http://localhost:5173/auth/google-callback";
+                var redirectUri = "https://localhost:7221/api/auth/google/callback";
 
                 // 1️⃣ Trao đổi authorization code lấy access token
-                var accessToken = await ExchangeCodeForAccessToken(clientId, clientSecret, redirectUri, request.Code);
+                var accessToken = await ExchangeCodeForAccessToken(clientId, clientSecret, redirectUri, code);
                 if (string.IsNullOrEmpty(accessToken))
                     return BadRequest(new { message = "❌ Không thể lấy access token từ Google" });
 
@@ -456,14 +447,6 @@ namespace doantotnghiep_api.Controllers
         // ====================================================================
         // 6️⃣ DTO & MODEL CLASSES
         // ====================================================================
-
-        /// <summary>
-        /// Request body cho Google OAuth callback
-        /// </summary>
-        public class GoogleCallbackRequest
-        {
-            public string Code { get; set; }
-        }
 
         /// <summary>
         /// Response từ Google userinfo endpoint
