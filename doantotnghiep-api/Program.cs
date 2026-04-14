@@ -17,6 +17,10 @@ var builder = WebApplication.CreateBuilder(args);
 // ====================================================================
 // 1️⃣ DATABASE CONFIGURATION
 // ====================================================================
+if (builder.Environment.IsDevelopment())
+{
+    builder.Configuration.AddUserSecrets<Program>();
+}
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("❌ Missing database connection string");
 
@@ -133,9 +137,7 @@ if (!string.IsNullOrEmpty(googleClientId) && !string.IsNullOrEmpty(googleClientS
     {
         options.ClientId = googleClientId;
         options.ClientSecret = googleClientSecret;
-        // Đường dẫn mặc định sẽ là /signin-google. 
-        // Nếu bạn muốn custom, hãy khai báo thêm:
-        // options.CallbackPath = "/api/auth/google/callback";
+        options.CallbackPath = "/api/auth/google/callback";
     });
 }
 
