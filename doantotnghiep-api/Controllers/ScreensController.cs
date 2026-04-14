@@ -172,5 +172,60 @@ namespace doantotnghiep_api.Controllers
 
             return Ok(new { message = $"Đã tạo 80 ghế cho phòng {screen.ScreenName}" });
         }
+
+        // =========================
+        // Lấy tất cả phòng chiếu theo branch_admin
+        // =========================
+        [HttpGet("my-screens")]
+        [Authorize(Roles = "BRANCH_ADMIN,BranchAdmin")]
+        public async Task<IActionResult> GetScreensByBranchAdmin()
+        {
+            try
+            {
+                // Lấy TheaterId từ JWT claims
+                var theaterIdClaim = User.FindFirst("TheaterId")?.Value;
+
+                if (string.IsNullOrEmpty(theaterIdClaim) || !int.TryParse(theaterIdClaim, out int theaterId))
+                {
+                    return Unauthorized(new { message = "Không tìm thấy TheaterId trong token" });
+                }
+
+                // Lấy tất cả phòng chiếu của rạp này
+                var screens = await _context.Theaters
+                    .AsNoTracking()
+                    .Where(t => t.TheaterId == theaterId)
+                    .SelectMany(t => t.Screens)
+                    .Select(s => new {
+                        s.ScreenId,
+                        s.ScreenName,
+                        s.ScreenType,
+                        s.TheaterId,
+                        TotalSeats = _context.Seats.Count(st => st.ScreenId == s.ScreenId)
+                    })
+                    .ToListAsync();
+
+                if (!screens.Any())
+                {
+                    return Ok(new
+                    {
+                        message = "Không có phòng chiếu nào",
+                        theaterId = theaterId,
+                        totalScreens = 0,
+                        data = screens
+                    });
+                }
+
+                return Ok(new
+                {
+                    theaterId = theaterId,
+                    totalScreens = screens.Count,
+                    data = screens
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = $"Lỗi server: {ex.Message}" });
+            }
+        }
     }
 }
