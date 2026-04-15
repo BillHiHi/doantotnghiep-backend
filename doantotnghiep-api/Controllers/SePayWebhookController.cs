@@ -130,7 +130,7 @@ namespace doantotnghiep_api.Controllers
             _ = Task.Run(async () => {
                 try
                 {
-                    using (var scope = _serviceProvider.CreateScope())
+                   using (var scope = _serviceProvider.CreateScope())
                     {
                         var scopedContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                         var scopedEmailService = scope.ServiceProvider.GetRequiredService<IEmailService>();
