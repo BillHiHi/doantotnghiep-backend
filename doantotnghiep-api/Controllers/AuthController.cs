@@ -22,12 +22,32 @@ namespace doantotnghiep_api.Controllers
         private readonly AppDbContext _context;
         private readonly IConfiguration _config;
         private readonly IEmailService _emailService;
+        private readonly CaptchaService _captchaService;
 
-        public AuthController(AppDbContext context, IConfiguration config, IEmailService emailService)
+        public AuthController(AppDbContext context, IConfiguration config, IEmailService emailService, CaptchaService captchaService)
         {
             _context = context;
             _config = config;
             _emailService = emailService;
+            _captchaService = captchaService;
+        }
+
+        /// <summary>
+        /// Lấy captcha mới (trả về ảnh base64 + sessionId)
+        /// </summary>
+        [HttpGet("captcha")]
+        [AllowAnonymous]
+        public IActionResult GetCaptcha()
+        {
+            var code = _captchaService.GenerateCaptcha();
+            var sessionId = _captchaService.StoreAndGetSessionId(code);
+            var imageBase64 = _captchaService.GenerateCaptchaImage(code);
+
+            return Ok(new
+            {
+                sessionId,
+                captchaImage = $"data:image/png;base64,{imageBase64}"
+            });
         }
 
         // ====================================================================
@@ -41,15 +61,47 @@ namespace doantotnghiep_api.Controllers
         [AllowAnonymous]
         public async Task<IActionResult> Register([FromBody] RegisterRequest request)
         {
+            // 1. Validate model (bao gồm ConfirmPassword qua [Compare])
+            if (!ModelState.IsValid)
+            {
+                var errors = ModelState
+                    .Where(x => x.Value?.Errors.Count > 0)
+                    .ToDictionary(
+                        k => k.Key,
+                        v => v.Value!.Errors.Select(e => e.ErrorMessage).ToArray()
+                    );
+                return BadRequest(new { message = "Dữ liệu không hợp lệ", errors });
+            }
+
+            // 2. Validate captcha
+            var sessionId = Request.Headers["X-Captcha-Session"].ToString();
+            if (string.IsNullOrEmpty(sessionId) || !_captchaService.ValidateCaptcha(sessionId, request.CaptchaCode))
+                return BadRequest(new { message = "Mã xác thực không đúng hoặc đã hết hạn" });
+
+            // 3. Kiểm tra email trùng
             if (await _context.Users.AnyAsync(x => x.Email == request.Email))
                 return BadRequest(new { message = "Email đã tồn tại" });
 
+            // 4. Kiểm tra số điện thoại trùng
+            if (await _context.Users.AnyAsync(x => x.PhoneNumber == request.PhoneNumber))
+                return BadRequest(new { message = "Số điện thoại đã được sử dụng" });
+
+            // 5. Validate tuổi tối thiểu 13
+            var today = DateTime.UtcNow.Date;
+            var age = today.Year - request.DateOfBirth.Year;
+            if (request.DateOfBirth.Date > today.AddYears(-age)) age--;
+            if (age < 13)
+                return BadRequest(new { message = "Bạn phải đủ 13 tuổi để đăng ký" });
+
+            // 6. Tạo user mới
             var user = new User
             {
                 Email = request.Email,
                 PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
                 FullName = request.FullName,
                 PhoneNumber = request.PhoneNumber,
+                Dob = request.DateOfBirth.ToUniversalTime(),
+                Gender = request.Gender,
                 Role = "User",
                 CreatedAt = DateTime.UtcNow
             };
@@ -131,7 +183,6 @@ namespace doantotnghiep_api.Controllers
         public IActionResult GetGoogleLoginUrl()
         {
             var clientId = _config["Authentication:Google:ClientId"];
-            // Phải là FRONTEND URL - nơi Google redirect về sau khi user đăng nhập
             var redirectUri = _config["Authentication:Google:RedirectUri"]
                 ?? "http://localhost:5173/auth/google-callback";
 
@@ -147,11 +198,11 @@ namespace doantotnghiep_api.Controllers
         /// <summary>
         /// Xử lý callback từ Google OAuth
         /// </summary>
-        [HttpGet("google/callback")]
-        [HttpPost("google/callback")]
+        [HttpPost("google/call-back")]
         [AllowAnonymous]
-        public async Task<IActionResult> GoogleCallback([FromQuery] string code)
+        public async Task<IActionResult> GoogleCallback([FromBody] GoogleLoginRequest request)
         {
+            var code = request.Code;
             try
             {
                 if (string.IsNullOrEmpty(code))
@@ -159,19 +210,16 @@ namespace doantotnghiep_api.Controllers
 
                 var clientId = _config["Authentication:Google:ClientId"];
                 var clientSecret = _config["Authentication:Google:ClientSecret"];
-                var redirectUri = "https://localhost:7221/api/auth/google/callback";
+                var redirectUri = "http://localhost:5173/auth/google-callback";
 
-                // 1️⃣ Trao đổi authorization code lấy access token
                 var accessToken = await ExchangeCodeForAccessToken(clientId, clientSecret, redirectUri, code);
                 if (string.IsNullOrEmpty(accessToken))
                     return BadRequest(new { message = "❌ Không thể lấy access token từ Google" });
 
-                // 2️⃣ Lấy thông tin user từ Google
                 var userData = await GetGoogleUserInfo(accessToken);
                 if (userData == null)
                     return BadRequest(new { message = "❌ Không thể lấy thông tin user từ Google" });
 
-                // 3️⃣ Kiểm tra hoặc tạo user mới
                 var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == userData.Email);
                 if (user == null)
                 {
@@ -188,7 +236,6 @@ namespace doantotnghiep_api.Controllers
                     await _context.SaveChangesAsync();
                 }
 
-                // 4️⃣ Tạo JWT token
                 var token = GenerateJwt(user);
 
                 return Ok(new
@@ -348,9 +395,6 @@ namespace doantotnghiep_api.Controllers
         // 5️⃣ HELPER METHODS
         // ====================================================================
 
-        /// <summary>
-        /// Tạo JWT token
-        /// </summary>
         private string GenerateJwt(User user)
         {
             var keyStr = _config["Jwt:Key"] ?? "SecretKeyToDefendYourAPI2026";
@@ -379,35 +423,26 @@ namespace doantotnghiep_api.Controllers
             return new JwtSecurityTokenHandler().WriteToken(token);
         }
 
-        /// <summary>
-        /// Trao đổi authorization code lấy access token từ Google
-        /// </summary>
         private async Task<string> ExchangeCodeForAccessToken(string clientId, string clientSecret, string redirectUri, string code)
         {
             try
             {
-                using (var client = new HttpClient())
+                using var client = new HttpClient();
+                var content = new FormUrlEncodedContent(new Dictionary<string, string>
                 {
-                    var content = new FormUrlEncodedContent(new Dictionary<string, string>
-                    {
-                        { "code", code },
-                        { "client_id", clientId },
-                        { "client_secret", clientSecret },
-                        { "redirect_uri", redirectUri },
-                        { "grant_type", "authorization_code" }
-                    });
+                    { "code", code },
+                    { "client_id", clientId },
+                    { "client_secret", clientSecret },
+                    { "redirect_uri", redirectUri },
+                    { "grant_type", "authorization_code" }
+                });
 
-                    var response = await client.PostAsync("https://oauth2.googleapis.com/token", content);
-                    if (!response.IsSuccessStatusCode)
-                        return null;
+                var response = await client.PostAsync("https://oauth2.googleapis.com/token", content);
+                if (!response.IsSuccessStatusCode) return null;
 
-                    var jsonString = await response.Content.ReadAsStringAsync();
-                    using (JsonDocument doc = JsonDocument.Parse(jsonString))
-                    {
-                        var root = doc.RootElement;
-                        return root.GetProperty("access_token").GetString();
-                    }
-                }
+                var jsonString = await response.Content.ReadAsStringAsync();
+                using var doc = JsonDocument.Parse(jsonString);
+                return doc.RootElement.GetProperty("access_token").GetString();
             }
             catch (Exception ex)
             {
@@ -416,26 +451,20 @@ namespace doantotnghiep_api.Controllers
             }
         }
 
-        /// <summary>
-        /// Lấy thông tin user từ Google API
-        /// </summary>
         private async Task<GoogleUserInfo> GetGoogleUserInfo(string accessToken)
         {
             try
             {
-                using (var client = new HttpClient())
-                {
-                    client.DefaultRequestHeaders.Authorization =
-                        new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+                using var client = new HttpClient();
+                client.DefaultRequestHeaders.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
 
-                    var response = await client.GetAsync("https://www.googleapis.com/oauth2/v2/userinfo");
-                    if (!response.IsSuccessStatusCode)
-                        return null;
+                var response = await client.GetAsync("https://www.googleapis.com/oauth2/v2/userinfo");
+                if (!response.IsSuccessStatusCode) return null;
 
-                    var jsonString = await response.Content.ReadAsStringAsync();
-                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                    return JsonSerializer.Deserialize<GoogleUserInfo>(jsonString, options);
-                }
+                var jsonString = await response.Content.ReadAsStringAsync();
+                var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                return JsonSerializer.Deserialize<GoogleUserInfo>(jsonString, options);
             }
             catch (Exception ex)
             {
@@ -448,9 +477,6 @@ namespace doantotnghiep_api.Controllers
         // 6️⃣ DTO & MODEL CLASSES
         // ====================================================================
 
-        /// <summary>
-        /// Response từ Google userinfo endpoint
-        /// </summary>
         public class GoogleUserInfo
         {
             [System.Text.Json.Serialization.JsonPropertyName("email")]
@@ -462,5 +488,7 @@ namespace doantotnghiep_api.Controllers
             [System.Text.Json.Serialization.JsonPropertyName("picture")]
             public string Picture { get; set; }
         }
+
+        public class GoogleLoginRequest { public string Code { get; set; } }
     }
 }

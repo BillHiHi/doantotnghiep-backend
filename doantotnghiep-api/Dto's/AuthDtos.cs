@@ -1,11 +1,41 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace doantotnghiep_api.Dto_s
 {
     public class RegisterRequest
     {
-        public string Email { get; set; } = "";
-        public string Password { get; set; } = "";
-        public string FullName { get; set; } = "";
-        public string PhoneNumber { get; set; } = "";
+        [Required(ErrorMessage = "Họ và tên là bắt buộc")]
+        [StringLength(100, MinimumLength = 2, ErrorMessage = "Họ và tên phải từ 2-100 ký tự")]
+        public string FullName { get; set; }
+
+        [Required(ErrorMessage = "Email là bắt buộc")]
+        [EmailAddress(ErrorMessage = "Email không hợp lệ")]
+        public string Email { get; set; }
+
+        [Required(ErrorMessage = "Mật khẩu là bắt buộc")]
+        [StringLength(100, MinimumLength = 6, ErrorMessage = "Mật khẩu phải từ 6-100 ký tự")]
+        public string Password { get; set; }
+
+        [Required(ErrorMessage = "Xác nhận mật khẩu là bắt buộc")]
+        [Compare("Password", ErrorMessage = "Mật khẩu xác nhận không khớp")]
+        public string ConfirmPassword { get; set; }
+
+        [Required(ErrorMessage = "Ngày sinh là bắt buộc")]
+        public DateTime DateOfBirth { get; set; }
+
+        // Không bắt buộc (không có dấu * trên form)
+        public string? Gender { get; set; }
+
+        [Required(ErrorMessage = "Số điện thoại là bắt buộc")]
+        [RegularExpression(@"^(0[3|5|7|8|9])+([0-9]{8})$", ErrorMessage = "Số điện thoại không hợp lệ")]
+        public string PhoneNumber { get; set; }
+
+        [Required(ErrorMessage = "Mã xác thực là bắt buộc")]
+        public string CaptchaCode { get; set; }
+
+        [Required(ErrorMessage = "Bạn phải đồng ý với điều khoản sử dụng")]
+        [Range(typeof(bool), "true", "true", ErrorMessage = "Bạn phải đồng ý với điều khoản sử dụng")]
+        public bool AgreeToTerms { get; set; }
     }
 
     public class LoginRequest

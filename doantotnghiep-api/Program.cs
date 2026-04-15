@@ -93,7 +93,7 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
     {
-        policy.SetIsOriginAllowed(origin => true) // Lưu ý: Có thể thay bằng domain cụ thể khi deploy
+        policy.SetIsOriginAllowed(origin => true)// Lưu ý: Có thể thay bằng domain cụ thể khi deploy
               .AllowAnyHeader()
               .AllowAnyMethod()
               .AllowCredentials()
