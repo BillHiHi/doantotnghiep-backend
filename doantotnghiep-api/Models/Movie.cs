@@ -1,4 +1,5 @@
 ﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 using doantotnghiep_api.Models;
 
 public class Movie
@@ -35,5 +36,12 @@ public class Movie
     [System.Text.Json.Serialization.JsonIgnore]
     public virtual ICollection<Showtime>? Showtimes { get; set; }
     public ICollection<TheaterMovie> TheaterMovies { get; set; } = new List<TheaterMovie>();
+    public int? ProducerId { get; set; }
+
+    [ForeignKey("ProducerId")]
+    public virtual Producer? Producer { get; set; }
+
+    // 2. Danh sách các hợp đồng liên quan đến phim này
+    public virtual ICollection<ScreeningContract> Contracts { get; set; } = new List<ScreeningContract>();
 
 }

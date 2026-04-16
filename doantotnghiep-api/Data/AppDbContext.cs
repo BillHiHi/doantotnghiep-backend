@@ -32,8 +32,8 @@ namespace doantotnghiep_api.Data
         public DbSet<Movie> Movies { get; set; }
         public DbSet<SeatLock> SeatLocks { get; set; }
         public DbSet<Showtime> Showtimes { get; set; }
-        public DbSet<User> Users { get;set; }
-        public DbSet<Bookings> Bookings { get; set; }  
+        public DbSet<User> Users { get; set; }
+        public DbSet<Bookings> Bookings { get; set; }
         public DbSet<Seat> Seats { get; set; }
         public DbSet<Screen> Screens { get; set; }
         public DbSet<Banner> Banners { get; set; }
@@ -44,6 +44,9 @@ namespace doantotnghiep_api.Data
         public DbSet<PointTransaction> PointTransactions { get; set; }
         public DbSet<Voucher> Vouchers { get; set; }
         public DbSet<UserVoucher> UserVouchers { get; set; }
+
+        public DbSet<Producer> Producers { get; set; }
+        public DbSet<ScreeningContract> ScreeningContracts { get; set; }
 
     }
 }

@@ -73,10 +73,12 @@ namespace doantotnghiep_api.Controllers
                 return BadRequest(new { message = "Dữ liệu không hợp lệ", errors });
             }
 
+            /*
             // 2. Validate captcha
             var sessionId = Request.Headers["X-Captcha-Session"].ToString();
             if (string.IsNullOrEmpty(sessionId) || !_captchaService.ValidateCaptcha(sessionId, request.CaptchaCode))
                 return BadRequest(new { message = "Mã xác thực không đúng hoặc đã hết hạn" });
+            */
 
             // 3. Kiểm tra email trùng
             if (await _context.Users.AnyAsync(x => x.Email == request.Email))

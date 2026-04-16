@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using doantotnghiep_api.Data;
 using doantotnghiep_api.Dto_s;
 using doantotnghiep_api.Dtos;
@@ -506,6 +507,390 @@ namespace doantotnghiep_api.Controllers
 
             return Ok(screens);
         }
+
+        [HttpPost("seed-today-showtimes")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN")]
+        public async Task<IActionResult> SeedTodayShowtimes([FromQuery] int? theaterId)
+        {
+            try
+            {
+                var today = DateTime.UtcNow.Date;
+                var timeSlots = new[] { "09:00", "12:00", "15:00", "18:00", "21:00" };
+
+                // Lấy danh sách phòng chiếu
+                var screensQuery = _context.Screens.Include(s => s.Theater).AsQueryable();
+                if (theaterId.HasValue)
+                    screensQuery = screensQuery.Where(s => s.TheaterId == theaterId.Value);
+
+                var screens = await screensQuery.ToListAsync();
+                if (!screens.Any())
+                    return BadRequest(new { message = "Không tìm thấy phòng chiếu nào" });
+
+                // Lấy danh sách phim đang chiếu (NowShowing)
+                var movies = await _context.Movies
+                    .Where(m => m.Status == "NowShowing" || m.Status == "Active" || m.Status == "Đang chiếu")
+                    .ToListAsync();
+
+                if (!movies.Any())
+                    return BadRequest(new { message = "Không tìm thấy phim đang chiếu nào" });
+
+                var createdShowtimes = 0;
+                var skippedShowtimes = 0;
+                var random = new Random();
+
+                foreach (var timeSlot in timeSlots)
+                {
+                    var startTime = DateTime.ParseExact(timeSlot, "HH:mm", null);
+                    var slotHour = startTime.Hour;
+                    var slotMinute = startTime.Minute;
+
+                    foreach (var screen in screens)
+                    {
+                        // Kiểm tra xem phòng này đã có suất chiếu nào trong khung giờ này chưa
+                        var slotStart = today.AddHours(slotHour).AddMinutes(slotMinute);
+                        var slotEnd = slotStart.AddHours(3); // Giả định mỗi suất tối đa 3 tiếng
+
+                        var hasConflict = await _context.Showtimes.AnyAsync(s =>
+                            s.ScreenId == screen.ScreenId &&
+                            s.StartTime.Date == today &&
+                            s.StartTime < slotEnd &&
+                            s.EndTime > slotStart);
+
+                        if (hasConflict)
+                        {
+                            skippedShowtimes++;
+                            continue;
+                        }
+
+                        // Chọn ngẫu nhiên 1 phim cho khung giờ này trong phòng này
+                        var movie = movies[random.Next(movies.Count)];
+                        var showtimeStart = slotStart;
+                        var showtimeEnd = showtimeStart.AddMinutes(movie.Duration + 15); // +15 phút quảng cáo
+
+                        // Tạo suất chiếu mới
+                        var showtime = new Showtime
+                        {
+                            MovieId = movie.MovieId,
+                            ScreenId = screen.ScreenId,
+                            StartTime = showtimeStart,
+                            EndTime = showtimeEnd,
+                            BasePrice = CalculateBasePrice(screen.ScreenType)
+                        };
+
+                        _context.Showtimes.Add(showtime);
+                        createdShowtimes++;
+                    }
+                }
+
+                await _context.SaveChangesAsync();
+
+                return Ok(new
+                {
+                    message = "Tạo suất chiếu thành công!",
+                    date = today.ToString("yyyy-MM-dd"),
+                    theaters = screens.Select(s => s.Theater?.Name).Distinct().Count(),
+                    screens = screens.Count,
+                    movies = movies.Count,
+                    createdShowtimes,
+                    skippedShowtimes,
+                    timeSlots
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[SEED SHOWTIMES ERROR]: {ex}");
+                return StatusCode(500, new { message = "Lỗi khi tạo suất chiếu", detail = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Tính giá vé cơ bản dựa trên loại phòng
+        /// </summary>
+        private decimal CalculateBasePrice(string screenType)
+        {
+            return screenType?.ToLower() switch
+            {
+                "imax" => 150000,
+                "4dx" => 140000,
+                "3d" => 100000,
+                "2d" => 80000,
+                _ => 80000
+            };
+        }
+
+        /// <summary>
+        /// Seed suất chiếu cho một rạp cụ thể trong ngày hôm nay
+        /// </summary>
+        [HttpPost("seed-today-showtimes/{theaterId}")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN")]
+        public async Task<IActionResult> SeedTodayShowtimesForTheater(int theaterId)
+        {
+            try
+            {
+                // Kiểm tra quyền của BranchAdmin
+                var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
+                var userTheaterId = User.FindFirst("TheaterId")?.Value;
+
+                if (userRole == "BRANCH_ADMIN" && userTheaterId != theaterId.ToString())
+                    return Forbid();
+
+                var today = DateTime.UtcNow.Date;
+                var timeSlots = new[] { "09:00", "12:00", "15:00", "18:00", "21:00" };
+
+                // Lấy danh sách phòng chiếu của rạp
+                var screens = await _context.Screens
+                    .Where(s => s.TheaterId == theaterId)
+                    .Include(s => s.Theater)
+                    .ToListAsync();
+
+                if (!screens.Any())
+                    return BadRequest(new { message = "Không tìm thấy phòng chiếu nào trong rạp này" });
+
+                // Lấy danh sách phim đã được phân phối cho rạp này
+                var movieIds = await _context.TheaterMovies
+                    .Where(tm => tm.TheaterId == theaterId)
+                    .Select(tm => tm.MovieId)
+                    .ToListAsync();
+
+                // Nếu không có phim phân phối, lấy tất cả phim đang chiếu
+                var moviesQuery = _context.Movies.AsQueryable();
+                if (movieIds.Any())
+                    moviesQuery = moviesQuery.Where(m => movieIds.Contains(m.MovieId));
+                else
+                    moviesQuery = moviesQuery.Where(m => m.Status == "NowShowing" || m.Status == "Đang chiếu");
+
+                var movies = await moviesQuery.ToListAsync();
+
+                if (!movies.Any())
+                    return BadRequest(new { message = "Không tìm thấy phim nào cho rạp này" });
+
+                var createdShowtimes = 0;
+                var skippedShowtimes = 0;
+                var details = new List<object>();
+                var random = new Random();
+
+                foreach (var timeSlot in timeSlots)
+                {
+                    var startTime = DateTime.ParseExact(timeSlot, "HH:mm", null);
+                    var slotHour = startTime.Hour;
+                    var slotMinute = startTime.Minute;
+
+                    foreach (var screen in screens)
+                    {
+                        var slotStart = today.AddHours(slotHour).AddMinutes(slotMinute);
+                        var slotEnd = slotStart.AddHours(3);
+
+                        // Kiểm tra trùng lặp
+                        var exists = await _context.Showtimes.AnyAsync(s =>
+                            s.ScreenId == screen.ScreenId &&
+                            s.StartTime.Date == today &&
+                            s.StartTime < slotEnd &&
+                            s.EndTime > slotStart);
+
+                        if (exists)
+                        {
+                            skippedShowtimes++;
+                            continue;
+                        }
+
+                        // Chọn ngẫu nhiên 1 phim cho khung giờ này
+                        var movie = movies[random.Next(movies.Count)];
+                        var showtimeStart = slotStart;
+                        var showtimeEnd = showtimeStart.AddMinutes(movie.Duration + 15);
+
+                        var showtime = new Showtime
+                        {
+                            MovieId = movie.MovieId,
+                            ScreenId = screen.ScreenId,
+                            StartTime = showtimeStart,
+                            EndTime = showtimeEnd,
+                            BasePrice = CalculateBasePrice(screen.ScreenType)
+                        };
+
+                        _context.Showtimes.Add(showtime);
+                        createdShowtimes++;
+
+                        details.Add(new
+                        {
+                            screenName = screen.ScreenName,
+                            movieTitle = movie.Title,
+                            time = timeSlot,
+                            price = showtime.BasePrice
+                        });
+                    }
+                }
+
+                await _context.SaveChangesAsync();
+
+                return Ok(new
+                {
+                    message = $"Tạo {createdShowtimes} suất chiếu thành công cho rạp {screens.First().Theater?.Name}!",
+                    date = today.ToString("yyyy-MM-dd"),
+                    theaterId,
+                    theaterName = screens.First().Theater?.Name,
+                    screens = screens.Count,
+                    movies = movies.Count,
+                    createdShowtimes,
+                    skippedShowtimes,
+                    details
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[SEED SHOWTIMES ERROR]: {ex}");
+                return StatusCode(500, new { message = "Lỗi khi tạo suất chiếu", detail = ex.Message });
+            }
+        }
+
+        [HttpDelete("delete-all-showtimes")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN")]
+        public async Task<IActionResult> DeleteAllShowtimes([FromQuery] int? theaterId, [FromQuery] DateTime? date)
+        {
+            try
+            {
+                var targetDate = date?.Date ?? DateTime.UtcNow.Date;
+
+                // Lấy danh sách suất chiếu cần xóa
+                var query = _context.Showtimes
+                    .Include(s => s.Screen)
+                    .Where(s => s.StartTime.Date == targetDate)
+                    .AsQueryable();
+
+                if (theaterId.HasValue)
+                    query = query.Where(s => s.Screen.TheaterId == theaterId.Value);
+
+                var showtimesToDelete = await query.ToListAsync();
+
+                if (!showtimesToDelete.Any())
+                    return Ok(new { message = "Không có suất chiếu nào để xóa", deletedCount = 0 });
+
+                var deletedCount = showtimesToDelete.Count;
+                var theaterNames = showtimesToDelete.Select(s => s.Screen.Theater?.Name).Distinct().ToList();
+
+                _context.Showtimes.RemoveRange(showtimesToDelete);
+                await _context.SaveChangesAsync();
+
+                return Ok(new
+                {
+                    message = $"Đã xóa {deletedCount} suất chiếu thành công!",
+                    date = targetDate.ToString("yyyy-MM-dd"),
+                    deletedCount,
+                    theaters = theaterNames,
+                    theaterId
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[DELETE SHOWTIMES ERROR]: {ex}");
+                return StatusCode(500, new { message = "Lỗi khi xóa suất chiếu", detail = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Xóa tất cả suất chiếu của một rạp cụ thể trong ngày
+        /// </summary>
+        [HttpDelete("delete-all-showtimes/{theaterId}")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN")]
+        public async Task<IActionResult> DeleteAllShowtimesForTheater(int theaterId, [FromQuery] DateTime? date)
+        {
+            try
+            {
+                // Kiểm tra quyền của BranchAdmin
+                var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
+                var userTheaterId = User.FindFirst("TheaterId")?.Value;
+
+                if (userRole == "BRANCH_ADMIN" && userTheaterId != theaterId.ToString())
+                    return Forbid();
+
+                var targetDate = date?.Date ?? DateTime.UtcNow.Date;
+
+                // Lấy danh sách phòng của rạp
+                var screenIds = await _context.Screens
+                    .Where(s => s.TheaterId == theaterId)
+                    .Select(s => s.ScreenId)
+                    .ToListAsync();
+
+                if (!screenIds.Any())
+                    return BadRequest(new { message = "Không tìm thấy phòng chiếu nào trong rạp này" });
+
+                // Lấy suất chiếu cần xóa
+                var showtimesToDelete = await _context.Showtimes
+                    .Where(s => screenIds.Contains(s.ScreenId) && s.StartTime.Date == targetDate)
+                    .ToListAsync();
+
+                if (!showtimesToDelete.Any())
+                    return Ok(new { message = "Không có suất chiếu nào để xóa", deletedCount = 0 });
+
+                var deletedCount = showtimesToDelete.Count;
+
+                _context.Showtimes.RemoveRange(showtimesToDelete);
+                await _context.SaveChangesAsync();
+
+                return Ok(new
+                {
+                    message = $"Đã xóa {deletedCount} suất chiếu cho rạp vào ngày {targetDate:yyyy-MM-dd}!",
+                    date = targetDate.ToString("yyyy-MM-dd"),
+                    theaterId,
+                    deletedCount
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[DELETE SHOWTIMES ERROR]: {ex}");
+                return StatusCode(500, new { message = "Lỗi khi xóa suất chiếu", detail = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Xóa tất cả suất chiếu của một phòng cụ thể trong ngày
+        /// </summary>
+        [HttpDelete("delete-screen-showtimes/{screenId}")]
+        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN")]
+        public async Task<IActionResult> DeleteAllShowtimesForScreen(int screenId, [FromQuery] DateTime? date)
+        {
+            try
+            {
+                var targetDate = date?.Date ?? DateTime.UtcNow.Date;
+
+                // Kiểm tra quyền nếu là BranchAdmin
+                var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
+                var userTheaterId = User.FindFirst("TheaterId")?.Value;
+
+                if (userRole == "BRANCH_ADMIN")
+                {
+                    var screen = await _context.Screens.FindAsync(screenId);
+                    if (screen == null || screen.TheaterId.ToString() != userTheaterId)
+                        return Forbid();
+                }
+
+                var showtimesToDelete = await _context.Showtimes
+                    .Where(s => s.ScreenId == screenId && s.StartTime.Date == targetDate)
+                    .ToListAsync();
+
+                if (!showtimesToDelete.Any())
+                    return Ok(new { message = "Không có suất chiếu nào để xóa", deletedCount = 0 });
+
+                var deletedCount = showtimesToDelete.Count;
+
+                _context.Showtimes.RemoveRange(showtimesToDelete);
+                await _context.SaveChangesAsync();
+
+                return Ok(new
+                {
+                    message = $"Đã xóa {deletedCount} suất chiếu cho phòng vào ngày {targetDate:yyyy-MM-dd}!",
+                    date = targetDate.ToString("yyyy-MM-dd"),
+                    screenId,
+                    deletedCount
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[DELETE SHOWTIMES ERROR]: {ex}");
+                return StatusCode(500, new { message = "Lỗi khi xóa suất chiếu", detail = ex.Message });
+            }
+        }
+        
+
 
     }
 }

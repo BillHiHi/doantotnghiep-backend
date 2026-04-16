@@ -54,6 +54,8 @@ builder.Services.AddControllers()
     });
 
 builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddScoped<CaptchaService>();
+builder.Services.AddDistributedMemoryCache(); // Required for captcha session
 
 // ====================================================================
 // 5️⃣ SWAGGER WITH JWT SUPPORT
