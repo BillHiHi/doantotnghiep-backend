@@ -1,7 +1,7 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using doantotnghiep_api.Data; // Thay bằng namespace DbContext của bạn
+using doantotnghiep_api.Data;
 using doantotnghiep_api.Models;
 using doantotnghiep_api.Dto_s;
 
