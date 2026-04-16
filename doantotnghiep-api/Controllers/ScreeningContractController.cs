@@ -9,7 +9,7 @@ namespace doantotnghiep_api.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Admin, SUPER_ADMIN")]
     public class ScreeningContractsController : ControllerBase
     {
         private readonly AppDbContext _context;
@@ -128,6 +128,71 @@ namespace doantotnghiep_api.Controllers
             });
 
             return Ok(response);
+        }
+        [HttpPost("with-new-movie")]
+        public async Task<ActionResult<ContractResponse>> CreateMovieAndContract(CreateMovieAndContractRequest request)
+        {
+            // 1. Khởi tạo Transaction
+            using var transaction = await _context.Database.BeginTransactionAsync();
+
+            try
+            {
+                // 2. Tạo Phim mới trước
+                var movie = new Movie
+                {
+                    Title = request.MovieTitle,
+                    Duration = request.Duration,
+                    Genre = request.Genre,
+                    PosterUrl = request.PosterUrl,
+                    Status = "Coming Soon", // Mặc định khi mới ký hợp đồng
+                    ReleaseDate = request.ReleaseDate,
+                    Director = request.Director ?? "TBA",
+                    Actors = request.Actors ?? "TBA",
+                    TrailerUrl = request.TrailerUrl ?? "",
+                    AgeRating = request.AgeRating ?? "P",
+                    Language = request.Language ?? "Vietnamese"
+                };
+
+                _context.Movies.Add(movie);
+                await _context.SaveChangesAsync(); // Lưu để lấy MovieId tự động sinh
+
+                // 3. Tạo Hợp đồng dựa trên MovieId vừa tạo
+                int durationDays = (request.EndDate - request.StartDate).Days + 1;
+
+                var contract = new ScreeningContract
+                {
+                    MovieId = movie.MovieId, // Lấy ID từ phim vừa lưu ở bước trên
+                    ProducerId = request.ProducerId,
+                    StartDate = request.StartDate,
+                    EndDate = request.EndDate,
+                    TotalSlots = request.TotalSlots,
+                    CreatedAt = DateTime.Now
+                };
+
+                _context.ScreeningContracts.Add(contract);
+                await _context.SaveChangesAsync();
+
+                // 4. Xác nhận hoàn tất cả 2 bước
+                await transaction.CommitAsync();
+
+                // Trả về kết quả
+                return Ok(new ContractResponse
+                {
+                    ContractId = contract.ContractId,
+                    MovieTitle = movie.Title,
+                    StartDate = contract.StartDate,
+                    EndDate = contract.EndDate,
+                    TotalSlots = contract.TotalSlots,
+                    DurationDays = durationDays,
+                    Status = "Active"
+                });
+            }
+            catch (Exception ex)
+            {
+                // Nếu có bất kỳ lỗi nào, hủy bỏ toàn bộ thay đổi
+                await transaction.RollbackAsync();
+                return StatusCode(500, $"Lỗi hệ thống: {ex.Message}");
+            }
         }
     }
 }
