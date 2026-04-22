@@ -129,6 +129,11 @@ namespace doantotnghiep_api.Controllers
 
             if (screen == null)
                 return NotFound("Screen not found");
+            var hasShowtimes = await _context.Showtimes
+            .AnyAsync(s => s.ScreenId == id);
+
+            if (hasShowtimes)
+                return BadRequest(new { message = "Không thể xóa phòng chiếu vì đã có suất chiếu được gán vào." });
 
             _context.Screens.Remove(screen);
             await _context.SaveChangesAsync();

@@ -160,7 +160,11 @@ namespace doantotnghiep_api.Controllers
             // TỐI ƯU: Nên kiểm tra logic ngày tháng
             if (dto.EndDate.HasValue && dto.EndDate.Value <= dto.ReleaseDate)
                 return BadRequest(new { message = "Ngày kết thúc phải lớn hơn ngày khởi chiếu." });
+            var existingMovie = await _context.Movies
+            .FirstOrDefaultAsync(m => m.Title.ToLower() == dto.Title.ToLower());
 
+            if (existingMovie != null)
+                return BadRequest(new { message = "Phim với tiêu đề này đã tồn tại trong hệ thống." });
             var movie = new Movie
             {
                 Title = dto.Title,
