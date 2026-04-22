@@ -33,6 +33,8 @@ namespace doantotnghiep_api.Controllers
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 10) // 💡 TỐI ƯU 1: Thêm phân trang mặc định
         {
+            if (page <= 0) page = 1;
+            if (pageSize <= 0 || pageSize > 100) pageSize = 10;
             var query = _context.Movies.AsNoTracking().AsQueryable();
 
             // 💡 GIẢM BỚT ĐIỀU KIỆN LỌC: 
@@ -121,6 +123,10 @@ namespace doantotnghiep_api.Controllers
             if (isAlreadyAssigned)
                 return BadRequest(new { message = "Phim này đã được gán cho rạp này từ trước." });
 
+            var movie = await _context.Movies.FindAsync(dto.MovieID);
+            if (movie.Status == "Cancelled" || movie.Status == "Ended")
+                return BadRequest(new { message = "Không thể gán phim đã kết thúc hoặc bị hủy vào rạp." });
+
             var theaterMovie = new TheaterMovie
             {
                 MovieId = dto.MovieID,
@@ -165,6 +171,37 @@ namespace doantotnghiep_api.Controllers
 
             if (existingMovie != null)
                 return BadRequest(new { message = "Phim với tiêu đề này đã tồn tại trong hệ thống." });
+
+            // ❌ Thiếu 1: Không kiểm tra ReleaseDate có hợp lệ không
+            // Ví dụ: ReleaseDate = DateTime.MinValue hoặc quá xa tương lai
+            if (dto.ReleaseDate == default)
+                return BadRequest(new { message = "Ngày khởi chiếu không hợp lệ." });
+
+            // ❌ Thiếu 2: Duration không được kiểm tra
+            // Duration = 0, âm, hoặc phi thực tế (ví dụ 9999 phút)
+            if (dto.Duration <= 0 || dto.Duration > 600)
+                return BadRequest(new { message = "Thời lượng phim không hợp lệ (1 - 600 phút)." });
+
+            // ❌ Thiếu 3: Title rỗng hoặc quá dài không bị chặn ở tầng business
+            // (Chỉ dựa vào [Required] của DTO là chưa đủ nếu DTO không có annotation)
+            if (string.IsNullOrWhiteSpace(dto.Title))
+                return BadRequest(new { message = "Tiêu đề phim không được để trống." });
+
+            // ❌ Thiếu 4: PosterUrl không validate định dạng URL
+            // Có thể lưu chuỗi rác vào DB
+            if (!string.IsNullOrEmpty(dto.PosterUrl) && !Uri.IsWellFormedUriString(dto.PosterUrl, UriKind.Absolute))
+                return BadRequest(new { message = "PosterUrl không hợp lệ." });
+
+            // ❌ Thiếu 5: TrailerUrl tương tự
+            if (!string.IsNullOrEmpty(dto.TrailerUrl) && !Uri.IsWellFormedUriString(dto.TrailerUrl, UriKind.Absolute))
+                return BadRequest(new { message = "TrailerUrl không hợp lệ." });
+
+            // ❌ Thiếu 6: Status đầu vào không được whitelist
+            // Người dùng có thể truyền bất kỳ chuỗi nào, DetermineStatus chỉ xử lý "Hidden"/"Cancelled"
+            // nhưng không chặn giá trị rác
+            var allowedStatuses = new[] { "Hidden", "Cancelled", "ComingSoon", "NowShowing", "Ended" };
+            if (!string.IsNullOrEmpty(dto.Status) && !allowedStatuses.Contains(dto.Status))
+                return BadRequest(new { message = "Trạng thái phim không hợp lệ." });
             var movie = new Movie
             {
                 Title = dto.Title,
@@ -192,13 +229,48 @@ namespace doantotnghiep_api.Controllers
         [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN,BranchAdmin")]
         public async Task<IActionResult> UpdateMovie(int id, [FromBody] UpdateMovieDto dto)
         {
+            var movie = await _context.Movies.FindAsync(id);
+            if (movie == null)
+                return NotFound(new { message = "Không tìm thấy phim" });
+
             if (dto.EndDate.HasValue && dto.EndDate.Value <= dto.ReleaseDate)
                 return BadRequest(new { message = "Ngày kết thúc phải lớn hơn ngày khởi chiếu." });
 
-            var movie = await _context.Movies.FindAsync(id);
+            var hasActiveShowtimes = await _context.Showtimes
+                .AnyAsync(s => s.MovieId == id && s.StartTime > DateTime.Now);
+            if (hasActiveShowtimes && dto.EndDate.HasValue && dto.EndDate.Value < DateTime.Now)
+                return BadRequest(new { message = "Không thể đặt ngày kết thúc trong quá khứ khi phim còn lịch chiếu." });
 
-            if (movie == null)
-                return NotFound(new { message = "Movie not found" });
+            // ❌ Thiếu 1: Không kiểm tra ReleaseDate có hợp lệ không
+            // Ví dụ: ReleaseDate = DateTime.MinValue hoặc quá xa tương lai
+            if (dto.ReleaseDate == default)
+                return BadRequest(new { message = "Ngày khởi chiếu không hợp lệ." });
+
+            // ❌ Thiếu 2: Duration không được kiểm tra
+            // Duration = 0, âm, hoặc phi thực tế (ví dụ 9999 phút)
+            if (dto.Duration <= 0 || dto.Duration > 600)
+                return BadRequest(new { message = "Thời lượng phim không hợp lệ (1 - 600 phút)." });
+
+            // ❌ Thiếu 3: Title rỗng hoặc quá dài không bị chặn ở tầng business
+            // (Chỉ dựa vào [Required] của DTO là chưa đủ nếu DTO không có annotation)
+            if (string.IsNullOrWhiteSpace(dto.Title))
+                return BadRequest(new { message = "Tiêu đề phim không được để trống." });
+
+            // ❌ Thiếu 4: PosterUrl không validate định dạng URL
+            // Có thể lưu chuỗi rác vào DB
+            if (!string.IsNullOrEmpty(dto.PosterUrl) && !Uri.IsWellFormedUriString(dto.PosterUrl, UriKind.Absolute))
+                return BadRequest(new { message = "PosterUrl không hợp lệ." });
+
+            // ❌ Thiếu 5: TrailerUrl tương tự
+            if (!string.IsNullOrEmpty(dto.TrailerUrl) && !Uri.IsWellFormedUriString(dto.TrailerUrl, UriKind.Absolute))
+                return BadRequest(new { message = "TrailerUrl không hợp lệ." });
+
+            // ❌ Thiếu 6: Status đầu vào không được whitelist
+            // Người dùng có thể truyền bất kỳ chuỗi nào, DetermineStatus chỉ xử lý "Hidden"/"Cancelled"
+            // nhưng không chặn giá trị rác
+            var allowedStatuses = new[] { "Hidden", "Cancelled", "ComingSoon", "NowShowing", "Ended" };
+            if (!string.IsNullOrEmpty(dto.Status) && !allowedStatuses.Contains(dto.Status))
+                return BadRequest(new { message = "Trạng thái phim không hợp lệ." });
 
             movie.Title = dto.Title;
             movie.Description = dto.Description;
@@ -224,9 +296,18 @@ namespace doantotnghiep_api.Controllers
         public async Task<IActionResult> DeleteMovie(int id)
         {
             var movie = await _context.Movies.FindAsync(id);
-
             if (movie == null)
-                return NotFound(new { message = "Movie not found" });
+                return NotFound(new { message = "Không tìm thấy phim" });
+
+            var hasFutureShowtimes = await _context.Showtimes
+                .AnyAsync(s => s.MovieId == id && s.StartTime > DateTime.Now);
+            if (hasFutureShowtimes)
+                return BadRequest(new { message = "Không thể xóa phim đang có lịch chiếu. Hãy hủy lịch trước." });
+
+            var hasBookings = await _context.Bookings
+                .AnyAsync(b => b.Showtime.MovieId == id);
+            if (hasBookings)
+                return BadRequest(new { message = "Không thể xóa phim đã có lịch sử đặt vé. Hãy ẩn phim thay vì xóa." });
 
             _context.Movies.Remove(movie);
             await _context.SaveChangesAsync();
