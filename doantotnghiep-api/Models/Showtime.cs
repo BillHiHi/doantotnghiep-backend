@@ -8,7 +8,7 @@ namespace doantotnghiep_api.Models
         public DateTime StartTime { get; set; } //
         public DateTime EndTime { get; set; } //
         public decimal BasePrice { get; set; } //
-        public bool IsEarlyScreening { get; set; } //
+        public bool IsEarlyScreening { get; set; } //n
 
         // Navigation properties
         public virtual Movie Movie { get; set; } = null!; //

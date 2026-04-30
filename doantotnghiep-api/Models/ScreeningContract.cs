@@ -32,5 +32,6 @@ namespace doantotnghiep_api.Models
 
         [ForeignKey("MovieId")]
         public virtual Movie Movie { get; set; } = null!;
+        public virtual ICollection<ContractTheater> ContractTheaters { get; set; } = new List<ContractTheater>();
     }
 }

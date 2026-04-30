@@ -15,19 +15,14 @@ namespace doantotnghiep_api.Data
         {
             base.OnModelCreating(modelBuilder);
 
-            // Cấu hình khóa chính cho bảng trung gian
-            modelBuilder.Entity<TheaterMovie>()
-                .HasKey(tm => new { tm.MovieId, tm.TheaterId });
+            // Cấu hình cho bảng bạn ĐANG MUỐN thêm (ContractTheater)
+            modelBuilder.Entity<ContractTheater>()
+                .HasKey(ct => new { ct.ContractId, ct.TheaterId });
 
+            // KHAI BÁO THÊM cho bảng ĐÃ CÓ (TheaterMovie) để sửa lỗi Primary Key
+            // Việc khai báo này chỉ để EF Core hiểu cấu trúc, không làm mất dữ liệu
             modelBuilder.Entity<TheaterMovie>()
-                .HasOne(tm => tm.Movie)
-                .WithMany(m => m.TheaterMovies)
-                .HasForeignKey(tm => tm.MovieId);
-
-            modelBuilder.Entity<TheaterMovie>()
-                .HasOne(tm => tm.Theater)
-                .WithMany() // Nếu bảng Theater không có ICollection<TheaterMovie> thì để trống
-                .HasForeignKey(tm => tm.TheaterId);
+                .HasKey(tm => new { tm.TheaterId, tm.MovieId });
         }
         public DbSet<Movie> Movies { get; set; }
         public DbSet<SeatLock> SeatLocks { get; set; }
@@ -47,6 +42,7 @@ namespace doantotnghiep_api.Data
 
         public DbSet<Producer> Producers { get; set; }
         public DbSet<ScreeningContract> ScreeningContracts { get; set; }
+        public DbSet<ContractTheater> ContractTheaters { get; set; }
 
     }
 }

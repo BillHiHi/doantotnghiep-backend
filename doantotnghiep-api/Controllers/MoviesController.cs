@@ -379,8 +379,8 @@ namespace doantotnghiep_api.Controllers
             if (now < releaseDate)
                 return "ComingSoon";
 
-            if (endDate.HasValue && now > endDate.Value)
-                return "Ended";
+            //if (endDate.HasValue && now > endDate.Value)//
+                //return "Ended";//
 
             return "NowShowing";
         }

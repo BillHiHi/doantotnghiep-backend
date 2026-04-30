@@ -4,6 +4,8 @@ using Microsoft.EntityFrameworkCore;
 using doantotnghiep_api.Data;
 using doantotnghiep_api.Models;
 using doantotnghiep_api.DTOs;
+using doantotnghiep_api.Services;
+using doantotnghiep_api.Dto_s;
 
 namespace doantotnghiep_api.Controllers
 {
@@ -12,186 +14,190 @@ namespace doantotnghiep_api.Controllers
     [Authorize(Roles = "Admin, SUPER_ADMIN")]
     public class ScreeningContractsController : ControllerBase
     {
+        private readonly ContractService _contractService;
         private readonly AppDbContext _context;
 
-        public ScreeningContractsController(AppDbContext context)
+        public ScreeningContractsController(ContractService contractService, AppDbContext context)
         {
+            _contractService = contractService;
             _context = context;
         }
 
-        // 1. POST: api/ScreeningContracts (Tạo hợp đồng mới)
+        // POST: api/ScreeningContracts
         [HttpPost]
         public async Task<ActionResult<ContractResponse>> CreateContract(CreateContractRequest request)
         {
-            // Kiểm tra phim và NSX có tồn tại không
-            var movie = await _context.Movies.FindAsync(request.MovieId);
-            var producer = await _context.Producers.FindAsync(request.ProducerId);
-
-            if (movie == null || producer == null)
-                return BadRequest("Thông tin Phim hoặc Nhà sản xuất không hợp lệ.");
-
-            if (request.EndDate <= request.StartDate)
-                return BadRequest("Ngày kết thúc phải sau ngày bắt đầu.");
-
-            // Tính toán logic nghiệp vụ
-            int durationDays = (request.EndDate - request.StartDate).Days + 1;
-            int goldHourSlots = (int)Math.Round((request.TotalSlots * request.GoldHourPercentage) / 100.0);
-            int regularSlots = request.TotalSlots - goldHourSlots;
-
-            var contract = new ScreeningContract
-            {
-                MovieId = request.MovieId,
-                ProducerId = request.ProducerId,
-                StartDate = request.StartDate,
-                EndDate = request.EndDate,
-                TotalSlots = request.TotalSlots,
-                // Giả sử bạn đã thêm các field này vào Model ScreeningContract như trao đổi trước đó
-                CreatedAt = DateTime.Now
-            };
-
-            _context.ScreeningContracts.Add(contract);
-            await _context.SaveChangesAsync();
-
-            return Ok(new ContractResponse
-            {
-                ContractId = contract.ContractId,
-                MovieTitle = movie.Title,
-                ProducerName = producer.Name,
-                StartDate = contract.StartDate,
-                EndDate = contract.EndDate,
-                TotalSlots = contract.TotalSlots,
-                GoldHourSlots = goldHourSlots,
-                RegularSlots = regularSlots,
-                DurationDays = durationDays,
-                AverageSlotsPerDay = Math.Round((double)request.TotalSlots / durationDays, 2),
-                CreatedAt = contract.CreatedAt,
-                Status = "Active"
-            });
-        }
-
-        // 2. GET: api/ScreeningContracts/progress (Lấy danh sách kèm tiến độ)
-        [HttpGet("progress")]
-        public async Task<ActionResult<IEnumerable<ContractProgressResponse>>> GetContractsProgress()
-        {
-            var now = DateTime.Now;
-
-            // Lấy tất cả hợp đồng và include Showtimes để đếm suất thực tế
-            var contracts = await _context.ScreeningContracts
-                .Include(c => c.Movie)
-                .ThenInclude(m => m.Showtimes) // Giả sử Movie có ICollection<Showtime>
-                .Include(c => c.Producer)
-                .ToListAsync();
-
-            var response = contracts.Select(c =>
-            {
-                // Đếm số suất thực tế đã lên lịch trong khoảng thời gian hợp đồng
-                int usedSlots = c.Movie.Showtimes
-                    .Count(s => s.StartTime >= c.StartDate && s.StartTime <= c.EndDate);
-
-                int durationDays = (c.EndDate - c.StartDate).Days + 1;
-                int remainingSlots = Math.Max(0, c.TotalSlots - usedSlots);
-                double progressPercent = Math.Round((double)usedSlots / c.TotalSlots * 100, 2);
-
-                // Tính toán xem có bị chậm tiến độ không
-                // Logic: % thời gian đã trôi qua > % suất đã chiếu
-                double timeElapsedPercent = 0;
-                if (now > c.StartDate)
-                {
-                    double totalTime = (c.EndDate - c.StartDate).TotalMinutes;
-                    double elapsed = (now - c.StartDate).TotalMinutes;
-                    timeElapsedPercent = Math.Min(100, (elapsed / totalTime) * 100);
-                }
-
-                bool isBehind = timeElapsedPercent > progressPercent && progressPercent < 100;
-
-                // Số suất cần thêm mỗi ngày để hoàn thành đúng hạn
-                int remainingDays = Math.Max(1, (c.EndDate - now).Days + 1);
-                int slotsNeeded = (int)Math.Ceiling((double)remainingSlots / remainingDays);
-
-                return new ContractProgressResponse
-                {
-                    ContractId = c.ContractId,
-                    MovieTitle = c.Movie.Title,
-                    ProducerName = c.Producer.Name,
-                    StartDate = c.StartDate,
-                    EndDate = c.EndDate,
-                    TotalSlots = c.TotalSlots,
-                    DurationDays = durationDays,
-                    UsedSlots = usedSlots,
-                    RemainingSlots = remainingSlots,
-                    ProgressPercent = progressPercent,
-                    IsBehindSchedule = isBehind,
-                    SlotsNeededPerDayToComplete = remainingSlots > 0 ? slotsNeeded : 0,
-                    AverageSlotsPerDay = Math.Round((double)c.TotalSlots / durationDays, 2),
-                    Status = now > c.EndDate ? "Expired" : (now < c.StartDate ? "Pending" : "In Progress")
-                };
-            });
-
-            return Ok(response);
-        }
-        [HttpPost("with-new-movie")]
-        public async Task<ActionResult<ContractResponse>> CreateMovieAndContract(CreateMovieAndContractRequest request)
-        {
-            // 1. Khởi tạo Transaction
-            using var transaction = await _context.Database.BeginTransactionAsync();
+            // Validate tổng slot phân bổ
+            int totalAllocated = request.TheaterAllocations?.Sum(t => t.AllocatedSlots) ?? 0;
+            if (totalAllocated != request.TotalSlots)
+                return BadRequest(new { message = $"Tổng slot phân bổ ({totalAllocated}) phải bằng TotalSlots hợp đồng ({request.TotalSlots})." });
 
             try
             {
-                // 2. Tạo Phim mới trước
-                var movie = new Movie
-                {
-                    Title = request.MovieTitle,
-                    Duration = request.Duration,
-                    Genre = request.Genre,
-                    PosterUrl = request.PosterUrl,
-                    Status = "Coming Soon", // Mặc định khi mới ký hợp đồng
-                    ReleaseDate = request.ReleaseDate,
-                    Director = request.Director ?? "TBA",
-                    Actors = request.Actors ?? "TBA",
-                    TrailerUrl = request.TrailerUrl ?? "",
-                    AgeRating = request.AgeRating ?? "P",
-                    Language = request.Language ?? "Vietnamese"
-                };
-
-                _context.Movies.Add(movie);
-                await _context.SaveChangesAsync(); // Lưu để lấy MovieId tự động sinh
-
-                // 3. Tạo Hợp đồng dựa trên MovieId vừa tạo
-                int durationDays = (request.EndDate - request.StartDate).Days + 1;
-
                 var contract = new ScreeningContract
                 {
-                    MovieId = movie.MovieId, // Lấy ID từ phim vừa lưu ở bước trên
+                    MovieId = request.MovieId,
                     ProducerId = request.ProducerId,
                     StartDate = request.StartDate,
                     EndDate = request.EndDate,
                     TotalSlots = request.TotalSlots,
-                    CreatedAt = DateTime.Now
+                    CreatedAt = DateTime.Now,
+                    // Sửa lỗi tại đây: Thêm namespace đầy đủ của Models vào trước ContractTheater
+                    ContractTheaters = request.TheaterAllocations.Select(t => new doantotnghiep_api.Models.ContractTheater
+                    {
+                        TheaterId = t.TheaterId,
+                        AllocatedSlots = t.AllocatedSlots
+                    }).ToList()
                 };
 
-                _context.ScreeningContracts.Add(contract);
-                await _context.SaveChangesAsync();
+                var result = await _contractService.CreateContractAsync(contract);
 
-                // 4. Xác nhận hoàn tất cả 2 bước
-                await transaction.CommitAsync();
+                var movie = await _context.Movies.FindAsync(result.MovieId);
+                var producer = await _context.Producers.FindAsync(result.ProducerId);
 
-                // Trả về kết quả
                 return Ok(new ContractResponse
                 {
-                    ContractId = contract.ContractId,
-                    MovieTitle = movie.Title,
-                    StartDate = contract.StartDate,
-                    EndDate = contract.EndDate,
-                    TotalSlots = contract.TotalSlots,
-                    DurationDays = durationDays,
+                    ContractId = result.ContractId,
+                    MovieTitle = movie?.Title,
+                    ProducerName = producer?.Name,
+                    StartDate = result.StartDate,
+                    EndDate = result.EndDate,
+                    TotalSlots = result.TotalSlots,
                     Status = "Active"
                 });
             }
             catch (Exception ex)
             {
-                // Nếu có bất kỳ lỗi nào, hủy bỏ toàn bộ thay đổi
-                await transaction.RollbackAsync();
-                return StatusCode(500, $"Lỗi hệ thống: {ex.Message}");
+                return BadRequest(new { message = ex.Message });
+            }
+        }
+
+        // POST: api/ScreeningContracts/with-new-movie
+        [HttpPost("with-new-movie")]
+        public async Task<ActionResult<ContractResponse>> CreateMovieAndContract(CreateMovieAndContractRequest request)
+        {
+            try
+            {
+                var movie = new Movie
+                {
+                    Title = request.MovieTitle,
+                    Duration = request.Duration,
+                    Genre = request.Genre,
+                    ReleaseDate = request.ReleaseDate,
+                    ProducerId = request.ProducerId, // Cần ProducerId để mapping chính xác
+                    Status = "Coming Soon"
+                };
+
+                var contract = new ScreeningContract
+                {
+                    ProducerId = request.ProducerId,
+                    StartDate = request.StartDate,
+                    EndDate = request.EndDate,
+                    TotalSlots = request.TotalSlots
+                };
+
+                var result = await _contractService.CreateMovieAndContractAsync(movie, contract);
+
+                return Ok(new ContractResponse
+                {
+                    ContractId = result.ContractId,
+                    MovieTitle = movie.Title,
+                    Status = "Active"
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = ex.Message });
+            }
+        }
+
+        [HttpGet("progress")]
+        public async Task<IActionResult> GetContractsProgress()
+        {
+            var now = DateTime.Now;
+            var contracts = await _context.ScreeningContracts
+                .Include(c => c.Movie)
+                .Include(c => c.Producer)
+                .Include(c => c.ContractTheaters)
+                    .ThenInclude(ct => ct.Theater)
+                .ToListAsync();
+
+            var response = contracts.Select(c =>
+            {
+                // Breakdown từng rạp
+                var theaterBreakdowns = c.ContractTheaters.Select(ct =>
+                {
+                    int usedSlots = _context.Showtimes.Count(s =>
+                        s.MovieId == c.MovieId &&
+                        s.Screen.TheaterId == ct.TheaterId &&
+                        s.StartTime >= c.StartDate &&
+                        s.StartTime <= c.EndDate);
+
+                    return new TheaterSlotBreakdown
+                    {
+                        TheaterId = ct.TheaterId,
+                        TheaterName = ct.Theater?.Name,
+                        AllocatedSlots = ct.AllocatedSlots,
+                        UsedSlots = usedSlots,
+                        RemainingSlots = ct.AllocatedSlots - usedSlots
+                    };
+                }).ToList();
+
+                int totalUsed = theaterBreakdowns.Sum(t => t.UsedSlots);
+                int totalDays = (c.EndDate - c.StartDate).Days;
+                int daysRemaining = Math.Max((c.EndDate - now).Days, 0);
+                double progressPercent = c.TotalSlots > 0
+                    ? Math.Round((double)totalUsed / c.TotalSlots * 100, 2) : 0;
+                bool isBehindSchedule = totalDays > 0 &&
+                    progressPercent < (1 - (double)daysRemaining / totalDays) * 100;
+
+                // Status rõ ràng hơn
+                string status = now > c.EndDate ? "Expired"
+                    : totalUsed >= c.TotalSlots ? "Exhausted"
+                    : "Active";
+
+                return new ContractProgressResponse
+                {
+                    ContractId = c.ContractId,
+                    MovieTitle = c.Movie?.Title,
+                    ProducerName = c.Producer?.Name,
+                    TotalSlots = c.TotalSlots,
+                    UsedSlots = totalUsed,
+                    RemainingSlots = c.TotalSlots - totalUsed,
+                    ProgressPercent = progressPercent,
+                    StartDate = c.StartDate,
+                    EndDate = c.EndDate,
+                    Status = status,
+                    IsBehindSchedule = isBehindSchedule,
+                    TheaterBreakdowns = theaterBreakdowns  // ← chi tiết từng rạp
+                };
+            });
+
+            return Ok(response);
+        }
+
+        // DELETE: api/ScreeningContracts/5
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> DeleteContract(int id)
+        {
+            try
+            {
+                // Gọi logic kiểm tra và xóa từ Service
+                await _contractService.DeleteContractAsync(id);
+
+                return Ok(new
+                {
+                    message = "Xóa hợp đồng thành công.",
+                    contractId = id
+                });
+            }
+            catch (Exception ex)
+            {
+                // Trả về thông báo lỗi cụ thể từ các ràng buộc ở Service
+                return BadRequest(new
+                {
+                    message = ex.Message
+                });
             }
         }
     }

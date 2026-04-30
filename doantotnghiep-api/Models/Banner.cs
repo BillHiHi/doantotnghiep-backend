@@ -8,7 +8,7 @@ namespace doantotnghiep_api.Models
         public int BannerId { get; set; }
 
         public string ImageUrl { get; set; } = string.Empty;
-
+            
         public string? Title { get; set; }
 
         public string? Link { get; set; }

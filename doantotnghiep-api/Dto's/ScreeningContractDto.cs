@@ -1,4 +1,5 @@
 ﻿using System.ComponentModel.DataAnnotations;
+using doantotnghiep_api.Dto_s;
 
 namespace doantotnghiep_api.DTOs
 {
@@ -27,6 +28,14 @@ namespace doantotnghiep_api.DTOs
 
         // null = áp dụng tất cả rạp
         public int? CinemaId { get; set; }
+        public List<TheaterSlotAllocation> TheaterAllocations { get; set; }
+
+    }
+
+    public class TheaterSlotAllocation
+    {
+        public int TheaterId { get; set; }
+        public int AllocatedSlots { get; set; }
     }
 
     // Response DTO trả về sau khi tạo
@@ -44,6 +53,8 @@ namespace doantotnghiep_api.DTOs
         public double AverageSlotsPerDay { get; set; } // TB suất/ngày (hiển thị UI)
         public DateTime CreatedAt { get; set; }
         public string Status { get; set; } = string.Empty;
+        public List<TheaterSlotBreakdown> TheaterBreakdowns { get; set; } = new();
+
     }
 
     public class CreateMovieAndContractRequest

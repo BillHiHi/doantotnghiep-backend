@@ -28,16 +28,22 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(connectionString));
 
 // ====================================================================
-// 2️⃣ APPLICATION SERVICES
+// 2️⃣ APPLICATION SERVICES (UPDATED WITH NEW SERVICES)
 // ====================================================================
 builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddHostedService<MovieStatusUpdateService>();
+
+// Đăng ký các service quản lý Hợp đồng và Suất chiếu
+builder.Services.AddScoped<ContractService>();
+builder.Services.AddScoped<ShowtimeService>();
+builder.Services.AddScoped<SettlementService>();
+builder.Services.AddScoped<ShowtimeAutomationService>();
 
 // ====================================================================
 // 3️⃣ CACHING & COMPRESSION
 // ====================================================================
 builder.Services.AddMemoryCache();
-builder.Services.AddResponseCaching();
+builder.Services.AddResponseCaching();  
 builder.Services.AddResponseCompression(options =>
 {
     options.EnableForHttps = true;
@@ -95,7 +101,7 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
     {
-        policy.SetIsOriginAllowed(origin => true)// Lưu ý: Có thể thay bằng domain cụ thể khi deploy
+        policy.SetIsOriginAllowed(origin => true)
               .AllowAnyHeader()
               .AllowAnyMethod()
               .AllowCredentials()
@@ -108,7 +114,6 @@ builder.Services.AddCors(options =>
 // ====================================================================
 var jwtKey = builder.Configuration["Jwt:Key"] ?? "SecretKeyToDefendYourAPI2026";
 
-// Gộp chung cấu hình Authentication để tránh lỗi ghi đè Scheme
 var authBuilder = builder.Services
     .AddAuthentication(options =>
     {
@@ -129,7 +134,6 @@ var authBuilder = builder.Services
         };
     });
 
-// Tích hợp Google nếu có cấu hình trong Secrets hoặc appsettings
 var googleClientId = builder.Configuration["Authentication:Google:ClientId"];
 var googleClientSecret = builder.Configuration["Authentication:Google:ClientSecret"];
 
@@ -156,7 +160,7 @@ builder.Services.AddSignalR();
 var app = builder.Build();
 
 // ====================================================================
-// 🔟 MIDDLEWARE PIPELINE (THỨ TỰ CÓ QUAN TRỌNG!)
+// 🔟 MIDDLEWARE PIPELINE
 // ====================================================================
 
 if (app.Environment.IsDevelopment())
@@ -170,12 +174,9 @@ app.UseResponseCompression();
 app.UseHttpsRedirection();
 app.UseRouting();
 
-// CORS phải nằm sau UseRouting và trước UseAuthentication
 app.UseCors("AllowFrontend");
-
 app.UseResponseCaching();
 
-// Authentication trước Authorization
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -187,7 +188,7 @@ app.MapHub<BookingHub>("/bookings");
 app.MapGet("/", () => "✅ Backend Cinema API is running... 🚀");
 
 // ====================================================================
-// 1️⃣2️⃣ DATABASE INITIALIZATION (Auto-migrate)
+// 1️⃣2️⃣ DATABASE INITIALIZATION
 // ====================================================================
 using (var scope = app.Services.CreateScope())
 {
