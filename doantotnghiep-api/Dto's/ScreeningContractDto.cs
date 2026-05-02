@@ -1,5 +1,6 @@
 ﻿using System.ComponentModel.DataAnnotations;
 using doantotnghiep_api.Dto_s;
+using doantotnghiep_api.Models;
 
 namespace doantotnghiep_api.DTOs
 {
@@ -53,6 +54,8 @@ namespace doantotnghiep_api.DTOs
         public double AverageSlotsPerDay { get; set; } // TB suất/ngày (hiển thị UI)
         public DateTime CreatedAt { get; set; }
         public string Status { get; set; } = string.Empty;
+        public double TargetSlotsPerDay { get; set; } // (TotalSlots / DurationDays)
+        public double TargetGoldSlotsPerDay { get; set; } // (GoldHourSlots / DurationDays)
         public List<TheaterSlotBreakdown> TheaterBreakdowns { get; set; } = new();
 
     }
@@ -106,16 +109,25 @@ namespace doantotnghiep_api.DTOs
         [Range(0, 100, ErrorMessage = "Tỷ lệ giờ vàng phải từ 0-100%")]
         public int GoldHourPercentage { get; set; } = 30;
     }
-
     // DTO cho danh sách hợp đồng (tiến độ điều phối)
     public class ContractProgressResponse : ContractResponse
     {
-        public int UsedSlots { get; set; }          // Suất đã lên lịch
-        public int RemainingSlots { get; set; }     // Suất còn lại
-        public double ProgressPercent { get; set; } // % tiến độ
-        public bool IsBehindSchedule { get; set; }  // Có chậm tiến độ không
-        public int SlotsNeededPerDayToComplete { get; set; } // Cần thêm X suất/ngày
+        // --- Tiến độ tổng quát ---
+        public int UsedSlots { get; set; }
+        public int RemainingSlots { get; set; }
+        public double ProgressPercent { get; set; }
+
+        // --- TIẾN ĐỘ GIỜ VÀNG (Bổ sung chặt chẽ hơn) ---
+        public int CommittedGoldHourSlots { get; set; } // Số suất giờ vàng cam kết ban đầu
+        public int UsedGoldHourSlots { get; set; }      // Thực tế đã lên lịch vào khung 18h-22h
+        public int RemainingGoldHourSlots { get; set; } // Còn nợ bao nhiêu suất vàng
+        public double GoldHourProgressPercent { get; set; } // % hoàn thành KPI giờ vàng
+
+        // --- CẢNH BÁO CHO AUTOMATION ---
+        public bool IsBehindSchedule { get; set; }
+
+        // Thuật toán Automation sẽ dựa vào số này để tăng/giảm tần suất xếp lịch
+        public double DailySlotsNeeded { get; set; }
+        public double DailyGoldSlotsNeeded { get; set; }
     }
-
-
 }

@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using doantotnghiep_api.Data;
@@ -11,9 +12,11 @@ using doantotnghiep_api.Data;
 namespace doantotnghiep_api.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260502025421_screeningcontract_status")]
+    partial class screeningcontract_status
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -339,16 +342,10 @@ namespace doantotnghiep_api.Migrations
                     b.Property<DateTime>("EndDate")
                         .HasColumnType("timestamp without time zone");
 
-                    b.Property<int>("GoldHourPercentage")
-                        .HasColumnType("integer");
-
                     b.Property<int>("MovieId")
                         .HasColumnType("integer");
 
                     b.Property<int>("ProducerId")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("RequiredGoldHourSlots")
                         .HasColumnType("integer");
 
                     b.Property<DateTime>("StartDate")

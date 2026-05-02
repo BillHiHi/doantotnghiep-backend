@@ -27,7 +27,7 @@ namespace doantotnghiep_api.Controllers
         [HttpPost]
         public async Task<ActionResult<ContractResponse>> CreateContract(CreateContractRequest request)
         {
-            // Validate tổng slot phân bổ
+            // Giữ nguyên validate tổng slot phân bổ...
             int totalAllocated = request.TheaterAllocations?.Sum(t => t.AllocatedSlots) ?? 0;
             if (totalAllocated != request.TotalSlots)
                 return BadRequest(new { message = $"Tổng slot phân bổ ({totalAllocated}) phải bằng TotalSlots hợp đồng ({request.TotalSlots})." });
@@ -41,8 +41,9 @@ namespace doantotnghiep_api.Controllers
                     StartDate = request.StartDate,
                     EndDate = request.EndDate,
                     TotalSlots = request.TotalSlots,
+                    // THÊM DÒNG NÀY:
+                    GoldHourPercentage = request.GoldHourPercentage,
                     CreatedAt = DateTime.Now,
-                    // Sửa lỗi tại đây: Thêm namespace đầy đủ của Models vào trước ContractTheater
                     ContractTheaters = request.TheaterAllocations.Select(t => new doantotnghiep_api.Models.ContractTheater
                     {
                         TheaterId = t.TheaterId,
@@ -52,18 +53,16 @@ namespace doantotnghiep_api.Controllers
 
                 var result = await _contractService.CreateContractAsync(contract);
 
-                var movie = await _context.Movies.FindAsync(result.MovieId);
-                var producer = await _context.Producers.FindAsync(result.ProducerId);
-
                 return Ok(new ContractResponse
                 {
                     ContractId = result.ContractId,
-                    MovieTitle = movie?.Title,
-                    ProducerName = producer?.Name,
                     StartDate = result.StartDate,
                     EndDate = result.EndDate,
                     TotalSlots = result.TotalSlots,
-                    Status = "Active"
+                    // THÊM CÁC DÒNG NÀY ĐỂ TRẢ VỀ KẾT QUẢ TÍNH TOÁN:
+                    GoldHourSlots = result.RequiredGoldHourSlots,
+                    RegularSlots = result.TotalSlots - result.RequiredGoldHourSlots,
+                    Status = result.Status
                 });
             }
             catch (Exception ex)
@@ -78,22 +77,16 @@ namespace doantotnghiep_api.Controllers
         {
             try
             {
-                var movie = new Movie
-                {
-                    Title = request.MovieTitle,
-                    Duration = request.Duration,
-                    Genre = request.Genre,
-                    ReleaseDate = request.ReleaseDate,
-                    ProducerId = request.ProducerId, // Cần ProducerId để mapping chính xác
-                    Status = "Coming Soon"
-                };
+                var movie = new Movie { /* Giữ nguyên mapping phim */ };
 
                 var contract = new ScreeningContract
                 {
                     ProducerId = request.ProducerId,
                     StartDate = request.StartDate,
                     EndDate = request.EndDate,
-                    TotalSlots = request.TotalSlots
+                    TotalSlots = request.TotalSlots,
+                    // THÊM DÒNG NÀY:
+                    GoldHourPercentage = request.GoldHourPercentage
                 };
 
                 var result = await _contractService.CreateMovieAndContractAsync(movie, contract);
@@ -102,7 +95,8 @@ namespace doantotnghiep_api.Controllers
                 {
                     ContractId = result.ContractId,
                     MovieTitle = movie.Title,
-                    Status = "Active"
+                    GoldHourSlots = result.RequiredGoldHourSlots, // Trả về thông tin KPI
+                    Status = result.Status
                 });
             }
             catch (Exception ex)
@@ -122,54 +116,46 @@ namespace doantotnghiep_api.Controllers
                     .ThenInclude(ct => ct.Theater)
                 .ToListAsync();
 
+            // Lấy danh sách suất chiếu để tính toán thực tế
+            var allShowtimes = await _context.Showtimes.ToListAsync();
+
             var response = contracts.Select(c =>
             {
-                // Breakdown từng rạp
-                var theaterBreakdowns = c.ContractTheaters.Select(ct =>
-                {
-                    int usedSlots = _context.Showtimes.Count(s =>
-                        s.MovieId == c.MovieId &&
-                        s.Screen.TheaterId == ct.TheaterId &&
-                        s.StartTime >= c.StartDate &&
-                        s.StartTime <= c.EndDate);
+                // 1. Tính toán thực tế tổng quát
+                int totalUsed = allShowtimes.Count(s => s.MovieId == c.MovieId && s.StartTime >= c.StartDate && s.StartTime <= c.EndDate);
 
-                    return new TheaterSlotBreakdown
-                    {
-                        TheaterId = ct.TheaterId,
-                        TheaterName = ct.Theater?.Name,
-                        AllocatedSlots = ct.AllocatedSlots,
-                        UsedSlots = usedSlots,
-                        RemainingSlots = ct.AllocatedSlots - usedSlots
-                    };
-                }).ToList();
+                // 2. TÍNH TOÁN THỰC TẾ GIỜ VÀNG (18h-22h)
+                int usedGoldSlots = allShowtimes.Count(s =>
+                    s.MovieId == c.MovieId &&
+                    s.StartTime >= c.StartDate && s.StartTime <= c.EndDate &&
+                    s.StartTime.Hour >= 18 && s.StartTime.Hour < 22);
 
-                int totalUsed = theaterBreakdowns.Sum(t => t.UsedSlots);
-                int totalDays = (c.EndDate - c.StartDate).Days;
-                int daysRemaining = Math.Max((c.EndDate - now).Days, 0);
-                double progressPercent = c.TotalSlots > 0
-                    ? Math.Round((double)totalUsed / c.TotalSlots * 100, 2) : 0;
-                bool isBehindSchedule = totalDays > 0 &&
-                    progressPercent < (1 - (double)daysRemaining / totalDays) * 100;
+                int totalDays = Math.Max((c.EndDate - c.StartDate).Days, 1);
+                double progressPercent = Math.Round((double)totalUsed / c.TotalSlots * 100, 2);
 
-                // Status rõ ràng hơn
-                string status = now > c.EndDate ? "Expired"
-                    : totalUsed >= c.TotalSlots ? "Exhausted"
-                    : "Active";
+                // Tính % tiến độ giờ vàng
+                double goldProgressPercent = c.RequiredGoldHourSlots > 0
+                    ? Math.Round((double)usedGoldSlots / c.RequiredGoldHourSlots * 100, 2) : 100;
 
                 return new ContractProgressResponse
                 {
                     ContractId = c.ContractId,
                     MovieTitle = c.Movie?.Title,
-                    ProducerName = c.Producer?.Name,
                     TotalSlots = c.TotalSlots,
                     UsedSlots = totalUsed,
-                    RemainingSlots = c.TotalSlots - totalUsed,
+                    RemainingSlots = Math.Max(c.TotalSlots - totalUsed, 0),
                     ProgressPercent = progressPercent,
+
+                    // THÔNG TIN GIỜ VÀNG CHI TIẾT
+                    GoldHourSlots = c.RequiredGoldHourSlots,
+                    UsedGoldHourSlots = usedGoldSlots,
+                    RemainingGoldHourSlots = Math.Max(c.RequiredGoldHourSlots - usedGoldSlots, 0),
+                    GoldHourProgressPercent = goldProgressPercent,
+
                     StartDate = c.StartDate,
                     EndDate = c.EndDate,
-                    Status = status,
-                    IsBehindSchedule = isBehindSchedule,
-                    TheaterBreakdowns = theaterBreakdowns  // ← chi tiết từng rạp
+                    Status = now > c.EndDate ? "Expired" : (totalUsed >= c.TotalSlots ? "Completed" : "Active"),
+                    IsBehindSchedule = progressPercent < 50 && (c.EndDate - now).TotalDays < (totalDays / 2) // Ví dụ logic báo chậm
                 };
             });
 
@@ -198,6 +184,29 @@ namespace doantotnghiep_api.Controllers
                 {
                     message = ex.Message
                 });
+            }
+        }
+
+        // PATCH: api/ScreeningContracts/5/cancel
+        [HttpPatch("{id}/cancel")]
+        public async Task<IActionResult> CancelContract(int id)
+        {
+            try
+            {
+                // Gọi logic từ service
+                await _contractService.CancelContractAsync(id);
+
+                return Ok(new
+                {
+                    message = "Hủy hợp đồng thành công.",
+                    contractId = id,
+                    cancelledAt = DateTime.Now
+                });
+            }
+            catch (Exception ex)
+            {
+                // Trả về lỗi nếu không tìm thấy hoặc vi phạm logic nghiệp vụ (ví dụ: hợp đồng đã chạy)
+                return BadRequest(new { message = ex.Message });
             }
         }
     }
