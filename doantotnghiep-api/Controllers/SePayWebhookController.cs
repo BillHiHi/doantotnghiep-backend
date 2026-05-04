@@ -187,13 +187,24 @@ namespace doantotnghiep_api.Controllers
 
                         Console.WriteLine($"[WEBHOOK] ✅ Giao dịch {paymentCode} THÀNH CÔNG!");
 
-                        // 8. Gửi email & Tích điểm (Chỉ gửi 1 lần cho cả đơn hàng)
+                        // Snapshot dữ liệu để dùng cho Task chạy ngầm
                         var userIdForEmail = firstLock.UserId;
                         var showtimeIdForEmail = firstLock.ShowtimeId;
                         var finalPaymentCode = paymentCode;
                         var finalAmount = expectedAmount;
-                        var combosJson = firstLock.Combos; // Chụp lại JSON trước khi task chạy
+                        var combosJson = firstLock.Combos;
 
+                        // Thông báo SignalR ngay lập tức cho các khách hàng khác
+                        foreach (var item in targetSeats)
+                        {
+                            await _hub.Clients.Group($"Showtime_{item.ShowtimeId}").SendAsync("ReceiveSeatStatus", item.SeatId, "Booked", -1);
+                        }
+
+                        _context.SeatLocks.RemoveRange(targetSeats);
+                        await _context.SaveChangesAsync();
+                        await transaction.CommitAsync();
+
+                        // 8. Gửi email & Tích điểm (Chỉ chạy SAU KHI COMMIT thành công)
                         _ = Task.Run(async () => {
                             Console.WriteLine($"[EMAIL-TASK] 🚀 Bắt đầu tiến trình gửi mail cho giao dịch {finalPaymentCode}...");
                             try {
@@ -208,8 +219,6 @@ namespace doantotnghiep_api.Controllers
                                         .FirstOrDefaultAsync(s => s.ShowtimeId == showtimeIdForEmail);
                                     
                                     if (u != null && st != null) {
-                                        Console.WriteLine($"[EMAIL-TASK] 👤 Tìm thấy User: {u.Email}, Phim: {st.Movie?.Title}");
-                                        
                                         // Lấy danh sách tên ghế từ Bookings
                                         var bks = await sc.Bookings.AsNoTracking()
                                             .Include(b => b.Seat)
@@ -235,24 +244,12 @@ namespace doantotnghiep_api.Controllers
 
                                         await email.SendTicketEmailAsync(u.Email, u.FullName??"KH", u.PhoneNumber??"", st.Movie?.Title??"Phim", st.Movie?.PosterUrl??"", st.Screen?.Theater?.Name??"Rạp", st.Screen?.Theater?.Address??"", st.Screen?.ScreenName??"Phòng", st.StartTime, DateTime.Now, finalPaymentCode, finalAmount, seatsNames, comboText);
                                         Console.WriteLine($"[EMAIL-TASK] ✅ Đã gửi email vé thành công tới {u.Email}");
-                                    } else {
-                                        Console.WriteLine($"[EMAIL-TASK] ⚠️ Không tìm thấy User (ID:{userIdForEmail}) hoặc Suất chiếu (ID:{showtimeIdForEmail})");
                                     }
                                 }
                             } catch(Exception ex){ 
                                 Console.WriteLine("[EMAIL-TASK LỖI] ❌ " + ex.Message); 
-                                if(ex.InnerException != null) Console.WriteLine("Inner: " + ex.InnerException.Message);
                             }
                         });
-
-                        foreach (var item in targetSeats)
-                        {
-                            await _hub.Clients.Group($"Showtime_{item.ShowtimeId}").SendAsync("ReceiveSeatStatus", item.SeatId, "Booked", -1);
-                        }
-
-                        _context.SeatLocks.RemoveRange(targetSeats);
-                        await _context.SaveChangesAsync();
-                        await transaction.CommitAsync();
 
                         return Ok(new { success = true });
                     }
