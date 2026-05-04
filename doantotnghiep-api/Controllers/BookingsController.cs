@@ -456,14 +456,29 @@ namespace doantotnghiep_api.Controllers
 
                                 if (user != null && !string.IsNullOrEmpty(user.Email) && showtime != null)
                                 {
-                                    // Lấy danh sách tên ghế
+                                    // 1. Lấy danh sách tên ghế từ Bookings (vì SeatLock đã bị xóa)
                                     var paidSeats = await scopedContext.Bookings
                                         .Include(b => b.Seat)
-                                        .Where(b => b.UserId == request.UserId && b.ShowtimeId == request.ShowtimeId && b.Status == "Paid")
+                                        .Where(b => b.PaymentCode == paymentCode)
                                         .ToListAsync();
 
                                     string seatNames = string.Join(", ", paidSeats.Select(s => $"{s.Seat.RowNumber}{s.Seat.SeatNumber}"));
                                     decimal totalPaid = paidSeats.Sum(s => s.TotalAmount);
+
+                                    // 🍿 2. Giải mã Combo bắp nước
+                                    string comboText = "";
+                                    if (!string.IsNullOrEmpty(booking.Combos)) {
+                                        try {
+                                            using var doc = System.Text.Json.JsonDocument.Parse(booking.Combos);
+                                            var items = new List<string>();
+                                            foreach (var item in doc.RootElement.EnumerateArray()) {
+                                                string name = item.GetProperty("name").GetString() ?? "";
+                                                int qty = item.GetProperty("qty").GetInt32();
+                                                if (qty > 0) items.Add($"{qty}x {name}");
+                                            }
+                                            comboText = string.Join(", ", items);
+                                        } catch { comboText = booking.Combos; }
+                                    }
 
                                     var movie = showtime.Movie;
                                     var posterUrl = movie?.PosterUrl;
@@ -482,7 +497,7 @@ namespace doantotnghiep_api.Controllers
                                         paymentCode ?? "N/A",
                                         totalPaid,
                                         seatNames,
-                                        ""
+                                        comboText
                                     );
                                 }
                             }

@@ -187,19 +187,33 @@ namespace doantotnghiep_api.Controllers
 
                         Console.WriteLine($"[WEBHOOK] ✅ Giao dịch {paymentCode} THÀNH CÔNG!");
 
+                        // 8. Gửi email & Tích điểm (Chỉ gửi 1 lần cho cả đơn hàng)
+                        var userIdForEmail = firstLock.UserId;
+                        var showtimeIdForEmail = firstLock.ShowtimeId;
+                        var finalPaymentCode = paymentCode;
+                        var finalAmount = expectedAmount;
+
                         _ = Task.Run(async () => {
-                            try
-                            {
-                                using (var scope = _serviceProvider.CreateScope())
-                                {
+                            try {
+                                using (var scope = _serviceProvider.CreateScope()) {
                                     var sc = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                                     var email = scope.ServiceProvider.GetRequiredService<IEmailService>();
-                                    var u = await sc.Users.FindAsync(firstLock.UserId);
-                                    var st = await sc.Showtimes.Include(s => s.Movie).Include(s => s.Screen).ThenInclude(scr => scr.Theater).FirstOrDefaultAsync(s => s.ShowtimeId == firstLock.ShowtimeId);
-                                    if (u != null && st != null)
-                                    {
-                                        var seatsNames = string.Join(", ", await sc.Seats.Where(s => targetSeats.Select(ts => ts.SeatId).Contains(s.SeatId)).Select(s => s.RowNumber + s.SeatNumber).ToListAsync());
-                                        // 🍿 Giải mã Combo bắp nước từ JSON sang text
+                                    
+                                    var u = await sc.Users.FindAsync(userIdForEmail);
+                                    var st = await sc.Showtimes
+                                        .Include(s => s.Movie)
+                                        .Include(s => s.Screen).ThenInclude(scr => scr.Theater)
+                                        .FirstOrDefaultAsync(s => s.ShowtimeId == showtimeIdForEmail);
+                                    
+                                    if (u != null && st != null) {
+                                        // Lấy danh sách tên ghế vừa thanh toán xong
+                                        var seatsNames = string.Join(", ", await sc.Bookings
+                                            .Include(b => b.Seat)
+                                            .Where(b => b.PaymentCode == finalPaymentCode)
+                                            .Select(b => b.Seat.RowNumber + b.Seat.SeatNumber)
+                                            .ToListAsync());
+                                        
+                                        // 🍿 Giải mã Combo bắp nước
                                         string comboText = "";
                                         if (!string.IsNullOrEmpty(firstLock.Combos)) {
                                             try {
@@ -214,11 +228,13 @@ namespace doantotnghiep_api.Controllers
                                             } catch { comboText = firstLock.Combos; }
                                         }
 
-                                        await email.SendTicketEmailAsync(u.Email, u.FullName ?? "KH", u.PhoneNumber ?? "", st.Movie.Title, st.Movie.PosterUrl, st.Screen.Theater.Name, st.Screen.Theater.Address, st.Screen.ScreenName, st.StartTime, DateTime.Now, paymentCode, expectedAmount, seatsNames, comboText);
+                                        await email.SendTicketEmailAsync(u.Email, u.FullName??"KH", u.PhoneNumber??"", st.Movie.Title, st.Movie.PosterUrl, st.Screen.Theater.Name, st.Screen.Theater.Address, st.Screen.ScreenName, st.StartTime, DateTime.Now, finalPaymentCode, finalAmount, seatsNames, comboText);
+                                        Console.WriteLine($"[WEBHOOK] 📧 Đã gửi email vé tới {u.Email}");
                                     }
                                 }
+                            } catch(Exception ex){ 
+                                Console.WriteLine("[WEBHOOK EMAIL ERROR] " + ex.Message); 
                             }
-                            catch (Exception ex) { Console.WriteLine("[EMAIL ERROR] " + ex.Message); }
                         });
 
                         foreach (var item in targetSeats)
