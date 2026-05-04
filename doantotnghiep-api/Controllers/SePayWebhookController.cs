@@ -36,9 +36,19 @@ namespace doantotnghiep_api.Controllers
             return Ok(new
             {
                 status = "Alive",
-                message = "SePay Webhook endpoint is reachable! Please configure this URL in your SePay Dashboard.",
-                url = Request.Path.ToString()
+                message = "SePay Webhook endpoint is reachable!",
+                url = Request.Path.ToString(),
+                timestamp = DateTime.Now
             });
+        }
+
+        [HttpGet("debug-locks")]
+        public async Task<IActionResult> DebugLocks()
+        {
+            var locks = await _context.SeatLocks
+                .Select(l => new { l.SeatId, l.PaymentCode, l.ExpiryTime, l.UserId })
+                .ToListAsync();
+            return Ok(locks);
         }
 
         private async Task AwardPoints(int userId, decimal totalAmount, string description)
@@ -83,7 +93,7 @@ namespace doantotnghiep_api.Controllers
             }
             */
 
-            Console.WriteLine($"[WEBHOOK] 📥 Nhận dữ liệu: Content='{payload?.content}', Amount={payload?.transferAmount}");
+            Console.WriteLine($"[WEBHOOK] 📥 Nhận dữ liệu: Content='{payload?.content}', Ref='{payload?.referenceCode}', Amount={payload?.transferAmount}");
 
             if (payload == null)
             {
@@ -91,15 +101,26 @@ namespace doantotnghiep_api.Controllers
             }
 
             // 1. Tách lấy mã đơn hàng (RFxxxxxx)
-            string paymentCode = ExtractPaymentCode(payload.content) ?? ExtractPaymentCode(payload.referenceCode);
+            string rawContent = payload.content ?? "";
+            string paymentCode = ExtractPaymentCode(rawContent) ?? ExtractPaymentCode(payload.referenceCode);
 
             if (string.IsNullOrEmpty(paymentCode))
             {
-                Console.WriteLine($"[WEBHOOK] ❌ Không tìm thấy mã RF. Content: '{payload.content}', RefCode: '{payload.referenceCode}'");
+                Console.WriteLine($"[WEBHOOK] ❌ Không tìm thấy mã RF. Thử tìm số 6 chữ số...");
+                // Thử tìm số 6 chữ số bất kỳ nếu không có RF
+                var matchDigits = Regex.Match(rawContent, @"(\d{6})");
+                if (matchDigits.Success) {
+                    paymentCode = "RF" + matchDigits.Groups[1].Value;
+                }
+            }
+
+            if (string.IsNullOrEmpty(paymentCode))
+            {
+                Console.WriteLine($"[WEBHOOK] ❌ Vẫn không tìm thấy mã. Content: '{payload.content}'");
                 return Ok(new { success = false, message = "Payment code not found" });
             }
 
-            paymentCode = paymentCode.ToUpper();
+            paymentCode = paymentCode.ToUpper().Replace(" ", "");
             Console.WriteLine($"[WEBHOOK] 🔍 Đang xử lý mã: {paymentCode}");
 
             // ==========================================
@@ -254,8 +275,7 @@ namespace doantotnghiep_api.Controllers
         {
             if (string.IsNullOrEmpty(transferContent)) return null;
             
-            // Regex mới: Tìm chữ RF (không phân biệt hoa thường) 
-            // Có thể đứng giữa các ký tự khác
+            // Regex linh hoạt: Tìm chữ RF và theo sau là 6-10 chữ số
             var match = Regex.Match(transferContent, @"RF[\s\-_]?(\d{6,10})", RegexOptions.IgnoreCase);
             
             if (match.Success) 
