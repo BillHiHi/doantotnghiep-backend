@@ -133,13 +133,15 @@ namespace doantotnghiep_api.Controllers
                     return Ok(new { success = true, message = "Already processed" });
                 }
 
-                // 4. Tìm các ghế đang giữ
-                var lockedSeats = await _context.SeatLocks.Where(x => x.PaymentCode != null).ToListAsync();
-                var targetSeats = lockedSeats.Where(x => x.PaymentCode.Trim().ToUpper() == paymentCode).ToList();
+                // 4. Tìm các ghế đang bị khóa bởi mã này (Không phân biệt hoa thường)
+                string normalizedCode = paymentCode.ToUpper();
+                var targetSeats = await _context.SeatLocks
+                    .Where(x => x.PaymentCode.ToUpper() == normalizedCode)
+                    .ToListAsync();
 
                 if (!targetSeats.Any())
                 {
-                    Console.WriteLine($"[WEBHOOK] ❌ KHÔNG TÌM THẤY GHẾ cho mã {paymentCode}. Danh sách mã trong DB: {string.Join(", ", lockedSeats.Select(s => s.PaymentCode))}");
+                    Console.WriteLine($"[WEBHOOK] ❌ KHÔNG TÌM THẤY GHẾ cho mã {paymentCode}.");
                     return Ok(new { success = false, message = "No pending seats found" });
                 }
 
