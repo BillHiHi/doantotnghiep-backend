@@ -31,6 +31,7 @@ namespace doantotnghiep_api.Services
 
         public async Task SendEmailAsync(string toEmail, string subject, string body)
         {
+            Console.WriteLine($"[DEBUG-MAIL] 📬 Chuẩn bị gửi mail tới {toEmail}...");
             try
             {
                 if (string.IsNullOrEmpty(_settings.Username) || string.IsNullOrEmpty(_settings.Password))
