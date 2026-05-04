@@ -28,7 +28,7 @@ namespace doantotnghiep_api.Controllers
                 .Include(s => s.Screen)
                 .OrderBy(s => s.ScreenId)
                 .ThenBy(s => s.RowNumber)
-                .ThenBy(s => s.SeatNumber)
+                .ThenBy(s => s.SeatId) // Sắp xếp theo ID vật lý
                 .ToListAsync();
 
             return Ok(seats);
@@ -44,7 +44,7 @@ namespace doantotnghiep_api.Controllers
             var seats = await _context.Seats
                 .Where(s => s.ScreenId == screenId)
                 .OrderBy(s => s.RowNumber)
-                .ThenBy(s => s.SeatNumber)
+                .ThenBy(s => s.SeatId) // Sắp xếp theo ID vật lý
                 .ToListAsync();
 
             return Ok(seats);
@@ -109,6 +109,60 @@ namespace doantotnghiep_api.Controllers
         }
 
         // ===============================
+        // ✅ GENERATE CURVED SEATS (Cánh quạt)
+        // ===============================
+        [HttpPost("generate-curved")]
+        public async Task<IActionResult> GenerateCurvedSeats([FromBody] GenerateCurvedSeatsDto dto)
+        {
+            var screen = await _context.Screens.FindAsync(dto.ScreenId);
+            if (screen == null) return NotFound("Screen not found");
+
+            // Tự động xóa ghế cũ trước khi tạo
+            var existing = await _context.Seats.Where(s => s.ScreenId == dto.ScreenId).ToListAsync();
+            if (existing.Any()) {
+                _context.Seats.RemoveRange(existing);
+                await _context.SaveChangesAsync();
+            }
+
+            var newSeats = new List<Seat>();
+            char startRow = 'A';
+            
+            // Cấu hình số ghế cho từng hàng tạo hình cánh quạt (Bầu dục)
+            int[] rowWidths = new int[] { 10, 12, 14, 16, 16, 16, 14, 12 };
+
+            for (int i = 0; i < rowWidths.Length; i++)
+            {
+                string rowName = ((char)(startRow + i)).ToString();
+                int numCols = rowWidths[i];
+
+                for (int j = 1; j <= numCols; j++)
+                {
+                    // Gán ghế VIP cho vùng trung tâm
+                    bool isVip = false;
+                    if (i >= 2 && i <= 5) // Hàng C, D, E, F
+                    {
+                        int mid = numCols / 2;
+                        if (j > mid - 3 && j <= mid + 2) isVip = true; // 4 ghế giữa
+                    }
+
+                    newSeats.Add(new Seat
+                    {
+                        ScreenId = dto.ScreenId,
+                        RowNumber = rowName,
+                        SeatNumber = j,
+                        SeatType = isVip ? "VIP" : "Standard",
+                        IsHidden = false
+                    });
+                }
+            }
+
+            _context.Seats.AddRange(newSeats);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = $"Đã tạo sơ đồ cánh quạt ({newSeats.Count} ghế) cho phòng {screen.ScreenName}" });
+        }
+
+        // ===============================
         // ✅ UPDATE
         // ===============================
         [HttpPut("{id}")]
@@ -120,10 +174,29 @@ namespace doantotnghiep_api.Controllers
             seat.RowNumber = dto.RowNumber;
             seat.SeatNumber = dto.SeatNumber;
             seat.SeatType = dto.SeatType;
+            seat.IsHidden = dto.IsHidden;
 
             await _context.SaveChangesAsync();
 
             return NoContent();
+        }
+
+        // ===============================
+        // ✅ TOGGLE HIDE SEAT
+        // ===============================
+        [HttpPut("{id}/toggle-hide")]
+        public async Task<IActionResult> ToggleHideSeat(int id)
+        {
+            var seat = await _context.Seats.FindAsync(id);
+            if (seat == null) return NotFound();
+
+            seat.IsHidden = !seat.IsHidden;
+            await _context.SaveChangesAsync();
+            
+            // Recalculate SeatNumber
+            await RecalculateRowSeatNumbers(seat.ScreenId, seat.RowNumber);
+
+            return Ok(seat);
         }
 
         // ===============================
@@ -135,10 +208,38 @@ namespace doantotnghiep_api.Controllers
             var seat = await _context.Seats.FindAsync(id);
             if (seat == null) return NotFound();
 
+            var screenId = seat.ScreenId;
+            var rowNum = seat.RowNumber;
+
             _context.Seats.Remove(seat);
             await _context.SaveChangesAsync();
+            
+            // Recalculate SeatNumber
+            await RecalculateRowSeatNumbers(screenId, rowNum);
 
             return NoContent();
+        }
+
+        private async Task RecalculateRowSeatNumbers(int screenId, string rowNumber)
+        {
+            var seatsInRow = await _context.Seats
+                .Where(s => s.ScreenId == screenId && s.RowNumber == rowNumber)
+                .OrderBy(s => s.SeatId) // Giữ thứ tự vật lý
+                .ToListAsync();
+
+            int visibleCounter = 1;
+            foreach(var s in seatsInRow)
+            {
+                if (s.IsHidden)
+                {
+                    s.SeatNumber = 0; // Đánh dấu là 0 cho ghế ẩn
+                }
+                else
+                {
+                    s.SeatNumber = visibleCounter++;
+                }
+            }
+            await _context.SaveChangesAsync();
         }
 
         // ===============================
@@ -168,6 +269,11 @@ namespace doantotnghiep_api.Controllers
         public int NumCols { get; set; }
     }
 
+    public class GenerateCurvedSeatsDto
+    {
+        public int ScreenId { get; set; }
+    }
+
     public class CreateSeatDto
     {
         public int ScreenId { get; set; }
@@ -181,5 +287,6 @@ namespace doantotnghiep_api.Controllers
         public string RowNumber { get; set; } = string.Empty;
         public int SeatNumber { get; set; }
         public string SeatType { get; set; } = "Standard";
+        public bool IsHidden { get; set; } = false;
     }
 }

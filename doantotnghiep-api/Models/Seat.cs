@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace doantotnghiep_api.Models
@@ -21,6 +21,8 @@ namespace doantotnghiep_api.Models
         [Required]
         [StringLength(20)]
         public string SeatType { get; set; } // Standard, Premium, VIP
+
+        public bool IsHidden { get; set; } = false; // Thêm trạng thái ẩn ghế
 
         public Screen Screen { get; set; } = null!; // ⭐ thêm
 

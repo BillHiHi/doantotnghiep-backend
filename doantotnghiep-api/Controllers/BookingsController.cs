@@ -19,6 +19,8 @@ namespace doantotnghiep_api.Controllers
         private readonly IEmailService _emailService;
         private readonly IServiceProvider _serviceProvider;
         private readonly IConfiguration _configuration;
+        private static readonly object _lockObject = new object();
+        private static Random _random = new Random();
 
         public BookingsController(AppDbContext context, IHubContext<BookingHub> hub, IEmailService emailService, IServiceProvider serviceProvider, IConfiguration configuration)
         {
@@ -30,22 +32,22 @@ namespace doantotnghiep_api.Controllers
         }
 
         // 💡 RBAC HELPER: Lấy TheaterId của người dùng hiện tại từ Token
-        private int? UserTheaterId {
-            get {
+        private int? UserTheaterId
+        {
+            get
+            {
                 var claim = User.Claims.FirstOrDefault(c => c.Type == "TheaterId");
                 if (claim == null) return null;
                 return int.TryParse(claim.Value, out var id) ? id : null;
             }
         }
-        
+
         private async Task AwardPoints(int userId, decimal totalAmount, string description)
         {
             var user = await _context.Users.FindAsync(userId);
             if (user != null)
             {
-                // Mỗi lần đặt vé được tích 10 điểm (Để test)
                 int points = 10;
-                
                 user.Points += points;
 
                 var transaction = new PointTransaction
@@ -61,15 +63,35 @@ namespace doantotnghiep_api.Controllers
             }
         }
 
-        private bool IsBranchAdmin {
-             get {
+        // ✅ FIX: Generate PaymentCode an toàn với lock
+        private string GeneratePaymentCode()
+        {
+            lock (_lockObject)
+            {
+                return "RF" + _random.Next(100000, 999999).ToString();
+            }
+        }
+
+        // Hoặc dùng GUID (an toàn hơn):
+        private string GeneratePaymentCodeGuid()
+        {
+            var guid = Guid.NewGuid().ToString("N").Substring(0, 6).ToUpper();
+            return "RF" + guid;
+        }
+
+        private bool IsBranchAdmin
+        {
+            get
+            {
                 var role = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.Role || c.Type == "role")?.Value?.ToUpper();
                 return role == "BRANCH_ADMIN" || role == "BRANCHADMIN";
-             }
+            }
         }
-        
-        private bool IsSuperAdmin {
-            get {
+
+        private bool IsSuperAdmin
+        {
+            get
+            {
                 var role = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.Role || c.Type == "role")?.Value?.ToUpper();
                 return role == "SUPER_ADMIN" || role == "ADMIN";
             }
@@ -177,7 +199,53 @@ namespace doantotnghiep_api.Controllers
         }
 
         // =============================================
-        // CREATE FAKE QR PAYMENT
+        // CHECK PAYMENT STATUS (FOR FALLBACK)
+        // =============================================
+        [HttpGet("check-status/{paymentCode}")]
+        public async Task<IActionResult> CheckPaymentStatus(string paymentCode)
+        {
+            if (string.IsNullOrEmpty(paymentCode)) return BadRequest();
+
+            var upperCode = paymentCode.ToUpper();
+            var isPaid = await _context.Bookings.AnyAsync(b => b.PaymentCode != null && b.PaymentCode.ToUpper() == upperCode && b.Status == "Paid");
+
+            return Ok(new { paid = isPaid });
+        }
+
+        [HttpPost("simulate-success/{paymentCode}")]
+        public async Task<IActionResult> SimulateSuccess(string paymentCode)
+        {
+            var upperCode = paymentCode.ToUpper();
+            Console.WriteLine($"[DEBUG] 🛠️ NHẬN REQUEST GIẢ LẬP: {upperCode}");
+            var lockedSeats = await _context.SeatLocks.Where(x => x.PaymentCode != null && x.PaymentCode.ToUpper() == upperCode).ToListAsync();
+            if (!lockedSeats.Any()) return NotFound("Không tìm thấy ghế");
+            using (var transaction = await _context.Database.BeginTransactionAsync())
+            {
+                try {
+                    foreach (var lockItem in lockedSeats) {
+                        _context.Bookings.Add(new Bookings {
+                            UserId = lockItem.UserId, ShowtimeId = lockItem.ShowtimeId, SeatId = lockItem.SeatId,
+                            BookingDate = DateTime.UtcNow, Status = "Paid", TotalAmount = lockItem.TotalAmount ?? 0,
+                            PaymentCode = lockItem.PaymentCode, Combos = lockItem.Combos
+                        });
+                    }
+                    _context.SeatLocks.RemoveRange(lockedSeats);
+                    await _context.SaveChangesAsync();
+                    await transaction.CommitAsync();
+                    foreach (var lockItem in lockedSeats) {
+                        await _hub.Clients.Group($"Showtime_{lockItem.ShowtimeId}").SendAsync("ReceiveSeatStatus", lockItem.SeatId, "Locked", -1);
+                    }
+                    return Ok("Thành công");
+                } catch (Exception ex) {
+                    await transaction.RollbackAsync();
+                    return BadRequest(ex.Message);
+                }
+            }
+        }
+
+        // =============================================
+        // CREATE QR PAYMENT (SEPAY)
+        // ✅ FIX: PaymentCode an toàn
         // =============================================
         [HttpPost("create-payment")]
         public async Task<IActionResult> CreatePayment([FromBody] PaymentRequestDto dto)
@@ -189,12 +257,31 @@ namespace doantotnghiep_api.Controllers
 
                 var now = DateTime.UtcNow;
 
-                // tạo mã thanh toán duy nhất: ví dụ RF123456
-                var paymentCode = "RF" + new Random().Next(100000, 999999).ToString();
-                
+                // ✅ FIX: Tạo mã thanh toán an toàn (duy nhất)
+                string paymentCode;
+                bool exists;
+                int attempts = 0;
+                const int maxAttempts = 5;
+
+                do
+                {
+                    paymentCode = GeneratePaymentCode(); // hoặc GeneratePaymentCodeGuid()
+                    exists = await _context.SeatLocks.AnyAsync(x => x.PaymentCode == paymentCode) ||
+                             await _context.Bookings.AnyAsync(x => x.PaymentCode == paymentCode);
+                    attempts++;
+                } while (exists && attempts < maxAttempts);
+
+                if (exists)
+                {
+                    Console.WriteLine($"[CreatePayment] ❌ Không thể tạo mã thanh toán duy nhất sau {maxAttempts} lần thử");
+                    return StatusCode(500, "Lỗi tạo mã thanh toán");
+                }
+
+                Console.WriteLine($"[CreatePayment] 📝 Tạo mã thanh toán: {paymentCode}");
+
                 // Lock ghế ngay khi chuẩn bị thanh toán
                 decimal amountPerSeat = dto.TotalAmount / dto.SeatIds.Count;
-                
+
                 foreach (var seatId in dto.SeatIds)
                 {
                     // Check if already locked by someone else
@@ -215,11 +302,11 @@ namespace doantotnghiep_api.Controllers
 
                     if (myLock != null)
                     {
-                        myLock.ExpiryTime = now.AddMinutes(15); 
+                        myLock.ExpiryTime = now.AddMinutes(15);
                         myLock.PaymentCode = paymentCode;
-                        myLock.TotalAmount = amountPerSeat; // Chia đều để tránh double counting khi Sum()
-                        // myLock.Combos = dto.Combos;
-                        // myLock.UserVoucherId = dto.UserVoucherId;
+                        myLock.TotalAmount = amountPerSeat;
+                        myLock.Combos = dto.Combos;
+                        myLock.UserVoucherId = dto.UserVoucherId;
                     }
                     else
                     {
@@ -231,9 +318,9 @@ namespace doantotnghiep_api.Controllers
                             LockedAt = now,
                             ExpiryTime = now.AddMinutes(15),
                             PaymentCode = paymentCode,
-                            TotalAmount = amountPerSeat, // Chia đều
-                            // Combos = dto.Combos,
-                            // UserVoucherId = dto.UserVoucherId
+                            TotalAmount = amountPerSeat,
+                            Combos = dto.Combos,
+                            UserVoucherId = dto.UserVoucherId
                         };
                         _context.SeatLocks.Add(seatLock);
                     }
@@ -253,8 +340,10 @@ namespace doantotnghiep_api.Controllers
                 var sePaySection = _configuration.GetSection("SePaySettings");
                 var bankAccount = sePaySection["BankAccount"] ?? "YOUR_STK";
                 var bankName = sePaySection["BankName"] ?? "MBBank";
-                
+
                 var qrUrl = $"https://qr.sepay.vn/img?acc={bankAccount}&bank={bankName}&amount={dto.TotalAmount}&des={paymentCode}";
+
+                Console.WriteLine($"[CreatePayment] ✅ QR URL: {qrUrl}");
 
                 return Ok(new PaymentResultDto
                 {
@@ -264,12 +353,13 @@ namespace doantotnghiep_api.Controllers
             }
             catch (Exception ex)
             {
+                Console.WriteLine($"[CreatePayment Error]: {ex}");
                 return StatusCode(500, ex.ToString());
             }
         }
 
         // =============================================
-        // CONFIRM PAYMENT (FAKE SUCCESS)
+        // MANUAL CONFIRM PAYMENT (ADMIN ONLY)
         // =============================================
         [HttpPost("confirm-payment")]
         public async Task<IActionResult> ConfirmPayment([FromBody] SeatHoldRequest request)
@@ -319,9 +409,9 @@ namespace doantotnghiep_api.Controllers
                 await _context.SaveChangesAsync();
 
                 // GỬI EMAIL & TÍCH ĐIỂM (Khi ghế cuối cùng trong cùng 1 mã thanh toán được xác nhận)
-                var isLastSeat = !await _context.SeatLocks.AnyAsync(x => 
-                    x.UserId == request.UserId && 
-                    x.ShowtimeId == request.ShowtimeId && 
+                var isLastSeat = !await _context.SeatLocks.AnyAsync(x =>
+                    x.UserId == request.UserId &&
+                    x.ShowtimeId == request.ShowtimeId &&
                     x.PaymentCode == paymentCode);
 
                 if (isLastSeat)
@@ -330,9 +420,11 @@ namespace doantotnghiep_api.Controllers
                     await AwardPoints(request.UserId, 10, $"Tích điểm đặt vé (Mã: {paymentCode})");
 
                     // Đánh dấu voucher đã sử dụng
-                    if (lockSeat.UserVoucherId.HasValue) {
+                    if (lockSeat.UserVoucherId.HasValue)
+                    {
                         var uv = await _context.UserVouchers.FindAsync(lockSeat.UserVoucherId.Value);
-                        if (uv != null) {
+                        if (uv != null)
+                        {
                             uv.IsUsed = true;
                             uv.UsedAt = DateTime.UtcNow;
                         }
@@ -340,7 +432,8 @@ namespace doantotnghiep_api.Controllers
 
                     // Chạy task gửi email & tích điểm mà không làm chậm request chính
                     _ = Task.Run(async () => {
-                        try {
+                        try
+                        {
                             using (var scope = _serviceProvider.CreateScope())
                             {
                                 var scopedContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -360,13 +453,12 @@ namespace doantotnghiep_api.Controllers
                                         .Include(b => b.Seat)
                                         .Where(b => b.UserId == request.UserId && b.ShowtimeId == request.ShowtimeId && b.Status == "Paid")
                                         .ToListAsync();
-                                    
+
                                     string seatNames = string.Join(", ", paidSeats.Select(s => $"{s.Seat.RowNumber}{s.Seat.SeatNumber}"));
                                     decimal totalPaid = paidSeats.Sum(s => s.TotalAmount);
 
                                     var movie = showtime.Movie;
                                     var posterUrl = movie?.PosterUrl;
-                                  
 
                                     await scopedEmailService.SendTicketEmailAsync(
                                         user.Email,
@@ -382,17 +474,17 @@ namespace doantotnghiep_api.Controllers
                                         paymentCode ?? "N/A",
                                         totalPaid,
                                         seatNames,
-                                        "" // Combo trống cho confirm đơn lẻ
+                                        ""
                                     );
                                 }
                             }
-                        } catch (Exception ex) {
+                        }
+                        catch (Exception ex)
+                        {
                             Console.WriteLine("Email Error: " + ex.Message);
                         }
                     });
                 }
-
-
 
                 // Notify SignalR: Seat is now permanently occupied
                 await _hub.Clients
@@ -407,8 +499,9 @@ namespace doantotnghiep_api.Controllers
                 return StatusCode(500, ex.ToString());
             }
         }
+
         // =============================================
-        // CONFIRM ALL PAYMENT (BULK)
+        // MANUAL CONFIRM ALL PAYMENT (ADMIN ONLY)
         // =============================================
         [HttpPost("confirm-all-payment")]
         public async Task<IActionResult> ConfirmAllPayment([FromBody] ConfirmAllRequest request)
@@ -460,18 +553,21 @@ namespace doantotnghiep_api.Controllers
                 _context.SeatLocks.RemoveRange(lockedSeats);
 
                 // 4. Tích điểm (Cộng 10 điểm cho mỗi đơn hàng như yêu cầu)
-                if (lockedSeats.Any()) {
-                     await AwardPoints(request.UserId, 10, $"Tích điểm đặt vé (Mã: {request.PaymentCode})");
-                     
-                     // Đánh dấu voucher đã sử dụng
-                     var firstLock = lockedSeats.First();
-                     if (firstLock.UserVoucherId.HasValue) {
-                         var uv = await _context.UserVouchers.FindAsync(firstLock.UserVoucherId.Value);
-                         if (uv != null) {
-                             uv.IsUsed = true;
-                             uv.UsedAt = DateTime.UtcNow;
-                         }
-                     }
+                if (lockedSeats.Any())
+                {
+                    await AwardPoints(request.UserId, 10, $"Tích điểm đặt vé (Mã: {request.PaymentCode})");
+
+                    // Đánh dấu voucher đã sử dụng
+                    var firstLock = lockedSeats.First();
+                    if (firstLock.UserVoucherId.HasValue)
+                    {
+                        var uv = await _context.UserVouchers.FindAsync(firstLock.UserVoucherId.Value);
+                        if (uv != null)
+                        {
+                            uv.IsUsed = true;
+                            uv.UsedAt = DateTime.UtcNow;
+                        }
+                    }
                 }
 
                 await _context.SaveChangesAsync();
@@ -506,18 +602,24 @@ namespace doantotnghiep_api.Controllers
                                 var firstLock = lockedSeats.FirstOrDefault();
                                 // Giải mã JSON combo bắp nước
                                 string comboText = "";
-                                if (firstLock != null && !string.IsNullOrEmpty(firstLock.Combos)) {
-                                    try {
-                                        using (var doc = System.Text.Json.JsonDocument.Parse(firstLock.Combos)) {
+                                if (firstLock != null && !string.IsNullOrEmpty(firstLock.Combos))
+                                {
+                                    try
+                                    {
+                                        using (var doc = System.Text.Json.JsonDocument.Parse(firstLock.Combos))
+                                        {
                                             var items = new List<string>();
-                                            foreach (var item in doc.RootElement.EnumerateArray()) {
+                                            foreach (var item in doc.RootElement.EnumerateArray())
+                                            {
                                                 string name = item.GetProperty("name").GetString() ?? "";
                                                 int qty = item.GetProperty("qty").GetInt32();
                                                 if (qty > 0) items.Add($"{qty}x {name}");
                                             }
                                             comboText = string.Join(", ", items);
                                         }
-                                    } catch { 
+                                    }
+                                    catch
+                                    {
                                         comboText = firstLock?.Combos ?? "";
                                     }
                                 }
@@ -596,15 +698,10 @@ namespace doantotnghiep_api.Controllers
                     .FirstOrDefaultAsync(s => s.ShowtimeId == firstBooking.ShowtimeId);
 
                 string seatNames = string.Join(", ", bookings.Select(s => $"{s.Seat.RowNumber}{s.Seat.SeatNumber}"));
-                decimal totalAmount = bookings.Sum(b => b.TotalAmount) / bookings.Count(); // Wait, TotalAmount in Booking is usually total per lock
-
-                // Giả sử TotalAmount lưu đúng (nếu mỗi booking lưu tổng tiền, ta lấy của cái đầu)
-                totalAmount = firstBooking.TotalAmount;
+                decimal totalAmount = firstBooking.TotalAmount;
 
                 var movie = showtime?.Movie;
                 var posterUrl = movie?.PosterUrl;
-                
-                
 
                 return Ok(new
                 {
@@ -632,7 +729,7 @@ namespace doantotnghiep_api.Controllers
         // GET RECENT TICKETS (Lịch sử giao dịch)
         // =============================================
         [HttpGet("recent")]
-        [Authorize] // 🔐 Chấp nhận mọi Admin đã đăng nhập
+        [Authorize]
         public async Task<IActionResult> GetRecentTickets([FromQuery] int? theaterId)
         {
             try
@@ -645,7 +742,6 @@ namespace doantotnghiep_api.Controllers
                 }
 
                 // 2. Tìm 10 mã giao dịch (PaymentCode) mới nhất
-                // Chúng ta GroupBy theo PaymentCode và lấy Max BookingDate để lấy các đơn hàng mới nhất
                 var codesQuery = _context.Bookings.AsNoTracking()
                     .Where(b => !string.IsNullOrEmpty(b.PaymentCode));
 
@@ -656,9 +752,9 @@ namespace doantotnghiep_api.Controllers
 
                 var recentCodes = await codesQuery
                     .GroupBy(b => b.PaymentCode)
-                    .Select(g => new { 
-                        Code = g.Key, 
-                        LatestDate = g.Max(x => x.BookingDate) 
+                    .Select(g => new {
+                        Code = g.Key,
+                        LatestDate = g.Max(x => x.BookingDate)
                     })
                     .OrderByDescending(x => x.LatestDate)
                     .Take(10)
@@ -671,7 +767,6 @@ namespace doantotnghiep_api.Controllers
                 }
 
                 // 3. Lấy chi tiết thông tin cho các mã này
-                // Thực hiện Join với User, Showtime, Movie để lấy thông tin hiển thị
                 var allBookings = await _context.Bookings
                     .AsNoTracking()
                     .Include(b => b.User)
@@ -686,9 +781,10 @@ namespace doantotnghiep_api.Controllers
                     .Select(g => {
                         var first = g.OrderByDescending(x => x.BookingDate).FirstOrDefault();
                         if (first == null) return null;
-                        
+
                         var movie = first.Showtime?.Movie;
-                        return new {
+                        return new
+                        {
                             code = first.PaymentCode,
                             customerName = first.User?.FullName ?? "Khách hàng",
                             movie = movie?.Title ?? "Phim",
@@ -704,12 +800,12 @@ namespace doantotnghiep_api.Controllers
             }
             catch (Exception ex)
             {
-                // Log chi tiết ra Console để Admin có thể debug nếu cần
                 Console.WriteLine($"[Dashboard Error] GetRecentTickets: {ex}");
-                return StatusCode(500, new { 
-                    message = "Lỗi khi lấy danh sách giao dịch gần đây", 
+                return StatusCode(500, new
+                {
+                    message = "Lỗi khi lấy danh sách giao dịch gần đây",
                     error = ex.Message,
-                    stack = ex.StackTrace 
+                    stack = ex.StackTrace
                 });
             }
         }

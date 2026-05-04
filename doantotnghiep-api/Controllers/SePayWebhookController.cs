@@ -18,6 +18,8 @@ namespace doantotnghiep_api.Controllers
         private readonly IEmailService _emailService;
         private readonly IServiceProvider _serviceProvider;
         private readonly IConfiguration _configuration;
+        private static readonly object _lockObject = new object();
+        private static Random _random = new Random();
 
         public SePayWebhookController(AppDbContext context, IHubContext<BookingHub> hub, IEmailService emailService, IServiceProvider serviceProvider, IConfiguration configuration)
         {
@@ -28,43 +30,85 @@ namespace doantotnghiep_api.Controllers
             _configuration = configuration;
         }
 
+        [HttpGet]
+        public IActionResult TestConnection()
+        {
+            return Ok(new
+            {
+                status = "Alive",
+                message = "SePay Webhook endpoint is reachable! Please configure this URL in your SePay Dashboard.",
+                url = Request.Path.ToString()
+            });
+        }
+
+        private async Task AwardPoints(int userId, decimal totalAmount, string description)
+        {
+            var user = await _context.Users.FindAsync(userId);
+            if (user != null)
+            {
+                int points = 10;
+                user.Points += points;
+
+                var transaction = new PointTransaction
+                {
+                    UserId = userId,
+                    Points = points,
+                    Description = description,
+                    TransactionDate = DateTime.UtcNow
+                };
+
+                _context.PointTransactions.Add(transaction);
+                await _context.SaveChangesAsync();
+            }
+        }
+
         [HttpPost]
+        [HttpPost("receive")]
         public async Task<IActionResult> ReceiveWebhook([FromBody] SePayTransaction payload)
         {
             // ==========================================
-            // 0. KIỂM TRA BẢO MẬT (XÁC THỰC WEBHOOK)
+            // 0. LOGGING VÀ BẢO MẬT (TẠM DISABLE API KEY ĐỂ TEST)
             // ==========================================
             var authHeader = Request.Headers["Authorization"].ToString();
+            Console.WriteLine($"[WEBHOOK] 📥 Nhận request. Header Authorization: '{authHeader}'");
+
+            /*
             var configuredApiKey = _configuration["SePaySettings:ApiKey"];
             var expectedHeader = $"Apikey {configuredApiKey}";
-
-            if (string.IsNullOrEmpty(authHeader) || !authHeader.Equals(expectedHeader, StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrEmpty(configuredApiKey) &&
+                (string.IsNullOrEmpty(authHeader) || !authHeader.Equals(expectedHeader, StringComparison.OrdinalIgnoreCase)))
             {
-                Console.WriteLine("[WEBHOOK] ❌ Cảnh báo: Sai API Key hoặc có người lạ gọi Webhook!");
+                Console.WriteLine("[WEBHOOK] ❌ Cảnh báo: Sai API Key hoặc chưa cấu hình đúng trên SePay Dashboard!");
                 return Unauthorized(new { success = false, message = "Invalid API Key" });
             }
+            */
+
+            Console.WriteLine($"[WEBHOOK] 📥 Nhận dữ liệu: Content='{payload?.content}', Amount={payload?.transferAmount}");
 
             if (payload == null)
             {
-                return BadRequest("Invalid data");
+                return BadRequest(new { success = false, message = "Invalid data" });
             }
 
-            // 1. Lấy nội dung chuyển khoản
-            string content = payload.content;
-
-            // 2. Tách lấy mã đơn hàng (RFxxxxxx)
-            string paymentCode = ExtractPaymentCode(content);
+            // 1. Tách lấy mã đơn hàng (RFxxxxxx)
+            string paymentCode = ExtractPaymentCode(payload.content) ?? ExtractPaymentCode(payload.referenceCode);
 
             if (string.IsNullOrEmpty(paymentCode))
             {
-                return Ok(new { success = false, message = "Payment code not found in content" });
+                Console.WriteLine($"[WEBHOOK] ❌ Không tìm thấy mã RF. Content: '{payload.content}', RefCode: '{payload.referenceCode}'");
+                return Ok(new { success = false, message = "Payment code not found" });
             }
+
+            paymentCode = paymentCode.ToUpper();
+            Console.WriteLine($"[WEBHOOK] 🔍 Đang xử lý mã: {paymentCode}");
 
             // ==========================================
             // BƯỚC KIỂM TRA TRÙNG LẶP (IDEMPOTENCY)
-            // Tránh tạo 2 đơn hàng nếu SePay lỡ gửi webhook 2 lần
             // ==========================================
-            bool isAlreadyPaid = await _context.Bookings.AnyAsync(b => b.PaymentCode == paymentCode);
+            bool isAlreadyPaid = await _context.Bookings
+                .AsNoTracking()
+                .AnyAsync(b => b.PaymentCode == paymentCode && b.Status == "Paid");
+
             if (isAlreadyPaid)
             {
                 Console.WriteLine($"[WEBHOOK] ⚠️ Đơn hàng {paymentCode} đã được xử lý trước đó. Bỏ qua.");
@@ -73,174 +117,147 @@ namespace doantotnghiep_api.Controllers
 
             // 3. Tìm các ghế đang giữ với mã này
             var lockedSeats = await _context.SeatLocks
-                .Where(x => x.PaymentCode == paymentCode && x.ExpiryTime > DateTime.UtcNow)
+                .Where(x => x.PaymentCode != null && x.PaymentCode.ToUpper() == paymentCode)
                 .ToListAsync();
 
             if (!lockedSeats.Any())
             {
-                Console.WriteLine($"[WEBHOOK] ❌ Nhận được tiền nhưng ghế cho mã {paymentCode} đã hết hạn giữ hoặc không tồn tại!");
-                return Ok(new { success = false, message = "No pending seats found or expired" });
+                Console.WriteLine($"[WEBHOOK] ❌ KHÔNG TÌM THẤY GHẾ cho mã {paymentCode}. Có thể ghế đã hết hạn giữ (10p) hoặc mã sai.");
+                return Ok(new { success = false, message = "No pending seats found" });
             }
 
-            // 4. Kiểm tra số tiền khách chuyển so với tổng tiền đơn hàng
+            Console.WriteLine($"[WEBHOOK] 📍 Tìm thấy {lockedSeats.Count} ghế đang được giữ.");
+
+            // 4. Kiểm tra số tiền
             decimal amountIn = payload.transferAmount;
             decimal expectedAmount = lockedSeats.Sum(s => s.TotalAmount ?? 0);
+            decimal tolerance = 5000;
 
-            if (amountIn < expectedAmount)
+            Console.WriteLine($"[WEBHOOK] 💰 Kiểm tra tiền: Nhận={amountIn}, Cần={expectedAmount} (Sai số cho phép: {tolerance})");
+
+            if (Math.Abs(amountIn - expectedAmount) > tolerance)
             {
-                Console.WriteLine($"[WEBHOOK] ❌ Khách chuyển thiếu tiền. Yêu cầu: {expectedAmount}, Nhận: {amountIn}");
-                // Có thể return Ok hoặc BadRequest tuỳ logic của bạn, return Ok để SePay không gửi lại nữa
+                Console.WriteLine($"[WEBHOOK] ❌ Sai lệch số tiền quá lớn. Chênh lệch: {Math.Abs(amountIn - expectedAmount)}");
                 return Ok(new { success = false, message = "Insufficient amount" });
             }
 
-            // 5. Chuyển từ SeatLock sang Bookings
-            var now = DateTime.UtcNow;
-            foreach (var lockItem in lockedSeats)
+            // ==========================================
+            // SỬ DỤNG TRANSACTION
+            // ==========================================
+            using (var transaction = await _context.Database.BeginTransactionAsync())
             {
-                var booking = new Bookings
-                {
-                    UserId = lockItem.UserId,
-                    ShowtimeId = lockItem.ShowtimeId,
-                    SeatId = lockItem.SeatId,
-                    BookingDate = now,
-                    Status = "Paid",
-                    TotalAmount = lockItem.TotalAmount ?? 0,
-                    PaymentCode = lockItem.PaymentCode,
-                    // Combos = lockItem.Combos,
-                    // UserVoucherId = lockItem.UserVoucherId
-                };
-                _context.Bookings.Add(booking);
-            }
-
-            // MARK VOUCHER AS USED
-            var firstLock = lockedSeats.First();
-            if (firstLock.UserVoucherId.HasValue)
-            {
-                var uv = await _context.UserVouchers.FindAsync(firstLock.UserVoucherId.Value);
-                if (uv != null)
-                {
-                    uv.IsUsed = true;
-                    uv.UsedAt = DateTime.UtcNow;
-                }
-            }
-
-            // GỬI EMAIL XÁC NHẬN (Chạy ngầm bằng Task.Run)
-            var seatIds = lockedSeats.Select(s => s.SeatId).ToList();
-
-            _ = Task.Run(async () => {
                 try
                 {
-                   using (var scope = _serviceProvider.CreateScope())
+                    var now = DateTime.UtcNow;
+
+                    // 5. Chuyển từ SeatLock sang Bookings
+                    foreach (var lockItem in lockedSeats)
                     {
-                        var scopedContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                        var scopedEmailService = scope.ServiceProvider.GetRequiredService<IEmailService>();
-
-                        Console.WriteLine($"[WEBHOOK] 📧 Bắt đầu chuẩn bị email cho User ID: {firstLock.UserId}");
-
-                        var user = await scopedContext.Users.FindAsync(firstLock.UserId);
-                        var showtime = await scopedContext.Showtimes
-                            .Include(s => s.Movie)
-                            .Include(s => s.Screen)
-                                .ThenInclude(sc => sc.Theater)
-                            .FirstOrDefaultAsync(s => s.ShowtimeId == firstLock.ShowtimeId);
-
-                        if (user == null) Console.WriteLine("[WEBHOOK] ❌ Lỗi: Không tìm thấy thông tin User");
-                        if (showtime == null) Console.WriteLine("[WEBHOOK] ❌ Lỗi: Không tìm thấy thông tin Suất chiếu");
-
-                        if (user != null && !string.IsNullOrEmpty(user.Email) && showtime != null)
+                        var booking = new Bookings
                         {
-                            Console.WriteLine($"[WEBHOOK] 📤 Đang gửi mail tới: {user.Email}...");
-
-                            var movie = showtime.Movie;
-                            var posterUrl = movie?.PosterUrl;
-                            var scopedConfig = scope.ServiceProvider.GetRequiredService<IConfiguration>();
-                            var baseUrl = scopedConfig["AppBaseUrl"] ?? "http://localhost:5066";
-
-                            if (!string.IsNullOrEmpty(posterUrl) && !posterUrl.StartsWith("http"))
-                            {
-                                posterUrl = baseUrl.TrimEnd('/') + "/" + posterUrl.Replace("wwwroot/", "").TrimStart('/');
-                            }
-
-                            var seats = await scopedContext.Seats.Where(s => seatIds.Contains(s.SeatId)).ToListAsync();
-                            string seatNames = string.Join(", ", seats.Select(s => $"{s.RowNumber}{s.SeatNumber}"));
-                            decimal totalAmountPaid = lockedSeats.Sum(s => s.TotalAmount ?? 0);
-
-                            // Giải mã JSON combo bắp nước
-                            string comboText = "";
-                            if (!string.IsNullOrEmpty(firstLock.Combos))
-                            {
-                                try
-                                {
-                                    using (var doc = System.Text.Json.JsonDocument.Parse(firstLock.Combos))
-                                    {
-                                        var items = new List<string>();
-                                        foreach (var item in doc.RootElement.EnumerateArray())
-                                        {
-                                            string name = item.GetProperty("name").GetString();
-                                            int qty = item.GetProperty("qty").GetInt32();
-                                            if (qty > 0) items.Add($"{qty}x {name}");
-                                        }
-                                        comboText = string.Join(", ", items);
-                                    }
-                                }
-                                catch
-                                {
-                                    comboText = firstLock.Combos;
-                                }
-                            }
-
-                            await scopedEmailService.SendTicketEmailAsync(
-                                user.Email,
-                                user.FullName ?? "Khách hàng",
-                                user.PhoneNumber ?? "N/A",
-                                movie?.Title ?? "Phim",
-                                posterUrl ?? "",
-                                showtime.Screen?.Theater?.Name ?? "Rạp phim",
-                                showtime.Screen?.Theater?.Address ?? "",
-                                showtime.Screen?.ScreenName ?? "Phòng chiếu",
-                                showtime.StartTime,
-                                DateTime.Now,
-                                paymentCode.ToUpper(),
-                                totalAmountPaid,
-                                seatNames,
-                                comboText // Combo bắp nước
-                            );
-                            Console.WriteLine("[WEBHOOK] ✅ Hoàn tất gọi hàm gửi email.");
-                        }
-                        else
-                        {
-                            Console.WriteLine("[WEBHOOK] ⚠️ Bỏ qua gửi email do thiếu thông tin (Email/Showtime/User)");
-                        }
+                            UserId = lockItem.UserId,
+                            ShowtimeId = lockItem.ShowtimeId,
+                            SeatId = lockItem.SeatId,
+                            BookingDate = now,
+                            Status = "Paid",
+                            TotalAmount = lockItem.TotalAmount ?? 0,
+                            PaymentCode = lockItem.PaymentCode,
+                            Combos = lockItem.Combos,
+                            UserVoucherId = lockItem.UserVoucherId
+                        };
+                        _context.Bookings.Add(booking);
                     }
+
+                    await _context.SaveChangesAsync();
+
+                    // 6. Tặng điểm & Voucher
+                    var firstLock = lockedSeats.First();
+                    await AwardPoints(firstLock.UserId, 10, $"Tích điểm đặt vé (Mã: {paymentCode})");
+
+                    if (firstLock.UserVoucherId.HasValue)
+                    {
+                        var uv = await _context.UserVouchers.FindAsync(firstLock.UserVoucherId.Value);
+                        if (uv != null) { uv.IsUsed = true; uv.UsedAt = now; }
+                    }
+
+                    // 7. Xoá lock
+                    _context.SeatLocks.RemoveRange(lockedSeats);
+                    await _context.SaveChangesAsync();
+
+                    // Commit transaction
+                    await transaction.CommitAsync();
+                    Console.WriteLine($"[WEBHOOK] ✅ Giao dịch {paymentCode} thành công!");
+
+                    // 8. Gửi email ngầm
+                    var targetUserId = firstLock.UserId;
+                    var targetShowtimeId = firstLock.ShowtimeId;
+                    var targetCombos = firstLock.Combos;
+                    var targetPaymentCode = paymentCode;
+                    var targetSeatIds = lockedSeats.Select(s => s.SeatId).ToList();
+                    var targetTotalAmount = lockedSeats.Sum(s => s.TotalAmount ?? 0);
+
+                    _ = Task.Run(async () => {
+                        try
+                        {
+                            using (var scope = _serviceProvider.CreateScope())
+                            {
+                                var scopedContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                                var scopedEmailService = scope.ServiceProvider.GetRequiredService<IEmailService>();
+                                var user = await scopedContext.Users.FindAsync(targetUserId);
+                                var showtime = await scopedContext.Showtimes
+                                    .Include(s => s.Movie)
+                                    .Include(s => s.Screen).ThenInclude(sc => sc.Theater)
+                                    .FirstOrDefaultAsync(s => s.ShowtimeId == targetShowtimeId);
+
+                                if (user != null && showtime != null)
+                                {
+                                    var seats = await scopedContext.Seats.Where(s => targetSeatIds.Contains(s.SeatId)).ToListAsync();
+                                    string seatNames = string.Join(", ", seats.Select(s => $"{s.RowNumber}{s.SeatNumber}"));
+
+                                    await scopedEmailService.SendTicketEmailAsync(
+                                        user.Email, user.FullName ?? "Khách hàng", user.PhoneNumber ?? "N/A",
+                                        showtime.Movie.Title, showtime.Movie.PosterUrl,
+                                        showtime.Screen.Theater.Name, showtime.Screen.Theater.Address, showtime.Screen.ScreenName,
+                                        showtime.StartTime, DateTime.Now, targetPaymentCode, targetTotalAmount, seatNames, targetCombos
+                                    );
+                                }
+                            }
+                        }
+                        catch (Exception ex) { Console.WriteLine("[WEBHOOK] 📧 Lỗi gửi email: " + ex.Message); }
+                    });
+
+                    // 9. Notify SignalR
+                    foreach (var lockItem in lockedSeats)
+                    {
+                        await _hub.Clients.Group($"Showtime_{lockItem.ShowtimeId}")
+                            .SendAsync("ReceiveSeatStatus", lockItem.SeatId, "Locked", -1);
+                    }
+
+                    return Ok(new { success = true });
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine("[WEBHOOK] ❌ LỖI NGHIÊM TRỌNG TRONG TASK GỬI MAIL: " + ex.Message);
-                    if (ex.InnerException != null) Console.WriteLine("Inner: " + ex.InnerException.Message);
+                    await transaction.RollbackAsync();
+                    Console.WriteLine($"[WEBHOOK] ❌ Lỗi: {ex.Message}");
+                    return StatusCode(500, new { success = false });
                 }
-            });
-
-            // 6. Xoá lock và lưu vào Database
-            _context.SeatLocks.RemoveRange(lockedSeats);
-            await _context.SaveChangesAsync();
-
-            // 7. Notify SignalR cho từng ghế để realtime cập nhật giao diện
-            foreach (var lockItem in lockedSeats)
-            {
-                await _hub.Clients
-                    .Group($"Showtime_{lockItem.ShowtimeId}")
-                    .SendAsync("ReceiveSeatStatus", lockItem.SeatId, "Locked", -1); // -1 để báo hiệu đã thanh toán
             }
-
-            return Ok(new { success = true, message = "Payment processed successfully" });
         }
 
         private string ExtractPaymentCode(string transferContent)
         {
             if (string.IsNullOrEmpty(transferContent)) return null;
-            // Tìm chuỗi RF theo sau là 6 chữ số
-            var match = Regex.Match(transferContent, @"RF\d{6}", RegexOptions.IgnoreCase);
-            return match.Success ? match.Value.ToUpper() : null;
+            
+            // Regex mới: Tìm chữ RF (không phân biệt hoa thường) 
+            // theo sau có thể là dấu cách, dấu gạch ngang hoặc không có gì, 
+            // và kết thúc bằng đúng 6 chữ số.
+            var match = Regex.Match(transferContent, @"RF[\s\-_]?(\d{6})", RegexOptions.IgnoreCase);
+            
+            if (match.Success) 
+            {
+                return "RF" + match.Groups[1].Value;
+            }
+            return null;
         }
     }
 

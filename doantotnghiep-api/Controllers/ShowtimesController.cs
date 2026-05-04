@@ -50,7 +50,11 @@ namespace doantotnghiep_api.Controllers
         [AllowAnonymous]
         public async Task<IActionResult> GetAll([FromQuery] DateTime? from, [FromQuery] DateTime? to, [FromQuery] int? theaterId)
         {
-            var query = _context.Showtimes.AsNoTracking();
+            var query = _context.Showtimes
+                .Include(s => s.Screen)
+                    .ThenInclude(sc => sc.Theater)
+                .Include(s => s.Movie)
+                .AsNoTracking();
 
             if (IsBranchAdmin && UserTheaterId.HasValue)
                 query = query.Where(s => s.Screen.TheaterId == UserTheaterId.Value);
@@ -73,23 +77,20 @@ namespace doantotnghiep_api.Controllers
                     ShowtimeId = s.ShowtimeId,
                     MovieId = s.MovieId,
                     MovieTitle = s.Movie != null ? s.Movie.Title : "N/A",
+                    MoviePoster = s.Movie != null ? s.Movie.PosterUrl : "",
+                    MovieGenre = s.Movie != null ? s.Movie.Genre : "",
+                    MovieDuration = s.Movie != null ? s.Movie.Duration : 0,
                     ScreenId = s.ScreenId,
                     ScreenName = s.Screen != null ? s.Screen.ScreenName : "N/A",
+                    ScreenType = s.Screen != null ? s.Screen.ScreenType : "2D",
                     TheaterName = s.Screen != null && s.Screen.Theater != null ? s.Screen.Theater.Name : "N/A",
+                    TheaterId = s.Screen != null ? s.Screen.TheaterId : 0,
                     StartTime = s.StartTime,
                     EndTime = s.EndTime,
-                    TheaterId = s.Screen != null ? s.Screen.TheaterId : 0,
                     BasePrice = s.BasePrice,
-                    TotalSeats = s.Screen != null
-                                        ? _context.Seats.Count(st => st.ScreenId == s.ScreenId)
-                                        : 0,
-                    AvailableSeats = (s.Screen != null
-                                        ? _context.Seats.Count(st => st.ScreenId == s.ScreenId)
-                                        : 0)
-                                     - _context.Bookings.Count(b =>
-                                         b.ShowtimeId == s.ShowtimeId &&
-                                         (b.Status == "Hoàn thành" || b.Status == "Paid"
-                                          || b.Status == "paid" || b.Status == "collected")),
+                    TotalSeats = s.Screen != null ? _context.Seats.Count(st => st.ScreenId == s.ScreenId) : 0,
+                    AvailableSeats = (s.Screen != null ? _context.Seats.Count(st => st.ScreenId == s.ScreenId) : 0)
+                                     - _context.Bookings.Count(b => b.ShowtimeId == s.ShowtimeId && (b.Status == "Hoàn thành" || b.Status == "Paid")),
                     IsEarlyScreening = s.IsEarlyScreening
                 })
                 .ToListAsync();
@@ -113,7 +114,7 @@ namespace doantotnghiep_api.Controllers
 
                 if (!result.Success)
                 {
-                    return Ok(result); 
+                    return Ok(result);
                 }
 
                 return Ok(result);
@@ -166,21 +167,40 @@ namespace doantotnghiep_api.Controllers
 
         [HttpGet("movie/{movieId}")]
         [AllowAnonymous]
-        public async Task<IActionResult> GetByMovie(int movieId)
+        public async Task<IActionResult> GetByMovie(int movieId, [FromQuery] int? theaterId, [FromQuery] DateTime? date)
         {
-            var data = await _context.Showtimes
+            var query = _context.Showtimes
                 .AsNoTracking()
-                .Where(s => s.MovieId == movieId)
+                .Where(s => s.MovieId == movieId);
+
+            if (theaterId.HasValue)
+                query = query.Where(s => s.Screen.TheaterId == theaterId.Value);
+
+            if (date.HasValue)
+            {
+                var targetDate = date.Value.Date;
+                query = query.Where(s => s.StartTime >= targetDate && s.StartTime < targetDate.AddDays(1));
+            }
+            else
+            {
+                query = query.Where(s => s.StartTime >= DateTime.Today);
+            }
+
+            var data = await query
                 .OrderBy(s => s.StartTime)
                 .Select(s => new ShowtimeSimpleDto
                 {
                     ShowtimeId = s.ShowtimeId,
                     Time = s.StartTime.ToString("HH:mm"),
                     StartTime = s.StartTime,
+                    BasePrice = s.BasePrice,
+                    ScreenName = s.Screen.ScreenName,
+                    ScreenType = s.Screen.ScreenType,
+                    ScreenId = s.ScreenId,
                     TotalSeats = _context.Seats.Count(st => st.ScreenId == s.ScreenId),
                     AvailableSeats =
                         _context.Seats.Count(st => st.ScreenId == s.ScreenId) -
-                        (_context.Bookings.Count(b => b.ShowtimeId == s.ShowtimeId && (b.Status == "Hoàn thành" || b.Status == "Paid")) +
+                        (_context.Bookings.Count(b => b.ShowtimeId == s.ShowtimeId && (b.Status == "Hoàn thành" || b.Status == "Paid" || b.Status == "collected")) +
                          _context.SeatLocks.Count(sl => sl.ShowtimeId == s.ShowtimeId && sl.ExpiryTime > DateTime.UtcNow))
                 })
                 .ToListAsync();
@@ -406,7 +426,8 @@ namespace doantotnghiep_api.Controllers
                             Code = $"{(x.Seat.RowNumber ?? "Unknown")}{x.Seat.SeatNumber}",
                             Type = (x.Seat.SeatType ?? "Standard").ToLower(),
                             Status = x.IsBooked ? "booked" : x.LockerId.HasValue ? "locked" : "available",
-                            LockerId = x.LockerId ?? 0
+                            LockerId = x.LockerId ?? 0,
+                            IsHidden = x.Seat.IsHidden
                         }).ToList()
                     })
                     .ToList();
@@ -448,82 +469,6 @@ namespace doantotnghiep_api.Controllers
                 .ToListAsync();
 
             return Ok(screens);
-        }
-
-        [HttpPost("seed-today-showtimes/{theaterId}")]
-        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN")]
-        public async Task<IActionResult> SeedTodayShowtimesForTheater(int theaterId)
-        {
-            try
-            {
-                var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
-                var userTheaterId = User.FindFirst("TheaterId")?.Value;
-                if (userRole == "BRANCH_ADMIN" && userTheaterId != theaterId.ToString()) return Forbid();
-
-                var today = DateTime.UtcNow.Date;
-                var timeSlots = new[] { "09:00", "12:00", "15:00", "18:00", "21:00" };
-                var screens = await _context.Screens.Where(s => s.TheaterId == theaterId).Include(s => s.Theater).ToListAsync();
-                if (!screens.Any()) return BadRequest(new { message = "Không tìm thấy phòng chiếu nào" });
-
-                var movieIds = await _context.TheaterMovies.Where(tm => tm.TheaterId == theaterId).Select(tm => tm.MovieId).ToListAsync();
-                var moviesQuery = _context.Movies.AsQueryable();
-                if (movieIds.Any()) moviesQuery = moviesQuery.Where(m => movieIds.Contains(m.MovieId));
-                else moviesQuery = moviesQuery.Where(m => m.Status == "NowShowing" || m.Status == "Đang chiếu");
-
-                var movies = await moviesQuery.ToListAsync();
-                if (!movies.Any()) return BadRequest(new { message = "Không tìm thấy phim nào" });
-
-                var random = new Random();
-                foreach (var timeSlot in timeSlots)
-                {
-                    var startTime = DateTime.ParseExact(timeSlot, "HH:mm", null);
-                    foreach (var screen in screens)
-                    {
-                        var slotStart = today.AddHours(startTime.Hour).AddMinutes(startTime.Minute);
-                        var slotEnd = slotStart.AddHours(3);
-                        if (await _context.Showtimes.AnyAsync(s => s.ScreenId == screen.ScreenId && s.StartTime.Date == today && s.StartTime < slotEnd && s.EndTime > slotStart)) continue;
-
-                        var movie = movies[random.Next(movies.Count)];
-                        _context.Showtimes.Add(new Showtime
-                        {
-                            MovieId = movie.MovieId,
-                            ScreenId = screen.ScreenId,
-                            StartTime = slotStart,
-                            EndTime = slotStart.AddMinutes(movie.Duration + 15),
-                            BasePrice = CalculateBasePrice(screen.ScreenType)
-                        });
-                    }
-                }
-                await _context.SaveChangesAsync();
-                return Ok(new { message = "Tạo suất chiếu thành công!" });
-            }
-            catch (Exception ex) { return StatusCode(500, new { message = "Lỗi khi tạo suất chiếu", detail = ex.Message }); }
-        }
-
-        private decimal CalculateBasePrice(string screenType)
-        {
-            return screenType?.ToLower() switch { "imax" => 150000, "4dx" => 140000, "3d" => 100000, _ => 80000 };
-        }
-
-        [HttpDelete("delete-all-showtimes/{theaterId}")]
-        [Authorize(Roles = "Admin,SUPER_ADMIN,BRANCH_ADMIN")]
-        public async Task<IActionResult> DeleteAllShowtimesForTheater(int theaterId, [FromQuery] DateTime? date)
-        {
-            try
-            {
-                var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
-                var userTheaterId = User.FindFirst("TheaterId")?.Value;
-                if (userRole == "BRANCH_ADMIN" && userTheaterId != theaterId.ToString()) return Forbid();
-
-                var targetDate = date?.Date ?? DateTime.UtcNow.Date;
-                var showtimesToDelete = await _context.Showtimes.Where(s => s.Screen.TheaterId == theaterId && s.StartTime.Date == targetDate).ToListAsync();
-                if (!showtimesToDelete.Any()) return Ok(new { message = "Không có suất chiếu để xóa", deletedCount = 0 });
-
-                _context.Showtimes.RemoveRange(showtimesToDelete);
-                await _context.SaveChangesAsync();
-                return Ok(new { message = $"Đã xóa {showtimesToDelete.Count} suất chiếu!", deletedCount = showtimesToDelete.Count });
-            }
-            catch (Exception ex) { return StatusCode(500, new { message = "Lỗi khi xóa", detail = ex.Message }); }
         }
     }
 }
