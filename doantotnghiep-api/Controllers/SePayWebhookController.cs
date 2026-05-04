@@ -87,13 +87,15 @@ namespace doantotnghiep_api.Controllers
                 // 1. Tách lấy các trường cần thiết an toàn
                 string content = payload.TryGetProperty("content", out var pContent) ? pContent.ToString() : "";
                 string referenceCode = payload.TryGetProperty("referenceCode", out var pRef) ? pRef.ToString() : "";
-                
+
                 decimal transferAmount = 0;
-                if (payload.TryGetProperty("transferAmount", out var pAmount)) {
+                if (payload.TryGetProperty("transferAmount", out var pAmount))
+                {
                     decimal.TryParse(pAmount.ToString(), out transferAmount);
                 }
 
-                if (string.IsNullOrEmpty(content) && string.IsNullOrEmpty(referenceCode)) {
+                if (string.IsNullOrEmpty(content) && string.IsNullOrEmpty(referenceCode))
+                {
                     Console.WriteLine("[WEBHOOK] ❌ Dữ liệu không chứa content hoặc referenceCode.");
                     return BadRequest("Invalid payload structure");
                 }
@@ -105,7 +107,8 @@ namespace doantotnghiep_api.Controllers
                 {
                     Console.WriteLine($"[WEBHOOK] 🔍 Không thấy RF trong content. Thử tìm số 6-10 chữ số...");
                     var matchDigits = Regex.Match(content, @"(\d{6,10})");
-                    if (matchDigits.Success) {
+                    if (matchDigits.Success)
+                    {
                         paymentCode = "RF" + matchDigits.Groups[1].Value;
                     }
                 }
@@ -185,21 +188,26 @@ namespace doantotnghiep_api.Controllers
                         Console.WriteLine($"[WEBHOOK] ✅ Giao dịch {paymentCode} THÀNH CÔNG!");
 
                         _ = Task.Run(async () => {
-                            try {
-                                using (var scope = _serviceProvider.CreateScope()) {
+                            try
+                            {
+                                using (var scope = _serviceProvider.CreateScope())
+                                {
                                     var sc = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                                     var email = scope.ServiceProvider.GetRequiredService<IEmailService>();
                                     var u = await sc.Users.FindAsync(firstLock.UserId);
-                                    var st = await sc.Showtimes.Include(s=>s.Movie).Include(s=>s.Screen).ThenInclude(scr=>scr.Theater).FirstOrDefaultAsync(s=>s.ShowtimeId == firstLock.ShowtimeId);
-                                    if(u!=null && st!=null){
-                                        var seatsNames = string.Join(", ", await sc.Seats.Where(s => targetSeats.Select(ts=>ts.SeatId).Contains(s.SeatId)).Select(s=>s.RowNumber + s.SeatNumber).ToListAsync());
-                                        await email.SendTicketEmailAsync(u.Email, u.FullName??"KH", u.PhoneNumber??"", st.Movie.Title, st.Movie.PosterUrl, st.Screen.Theater.Name, st.Screen.Theater.Address, st.Screen.ScreenName, st.StartTime, DateTime.Now, paymentCode, expectedAmount, seatsNames, firstLock.Combos);
+                                    var st = await sc.Showtimes.Include(s => s.Movie).Include(s => s.Screen).ThenInclude(scr => scr.Theater).FirstOrDefaultAsync(s => s.ShowtimeId == firstLock.ShowtimeId);
+                                    if (u != null && st != null)
+                                    {
+                                        var seatsNames = string.Join(", ", await sc.Seats.Where(s => targetSeats.Select(ts => ts.SeatId).Contains(s.SeatId)).Select(s => s.RowNumber + s.SeatNumber).ToListAsync());
+                                        await email.SendTicketEmailAsync(u.Email, u.FullName ?? "KH", u.PhoneNumber ?? "", st.Movie.Title, st.Movie.PosterUrl, st.Screen.Theater.Name, st.Screen.Theater.Address, st.Screen.ScreenName, st.StartTime, DateTime.Now, paymentCode, expectedAmount, seatsNames, firstLock.Combos);
                                     }
                                 }
-                            } catch(Exception ex){ Console.WriteLine("[EMAIL ERROR] " + ex.Message); }
+                            }
+                            catch (Exception ex) { Console.WriteLine("[EMAIL ERROR] " + ex.Message); }
                         });
 
-                        foreach (var item in targetSeats) {
+                        foreach (var item in targetSeats)
+                        {
                             await _hub.Clients.Group($"Showtime_{item.ShowtimeId}").SendAsync("ReceiveSeatStatus", item.SeatId, "Booked", -1);
                         }
 
@@ -227,7 +235,7 @@ namespace doantotnghiep_api.Controllers
         {
             if (string.IsNullOrEmpty(transferContent)) return null;
             var match = Regex.Match(transferContent, @"RF[\s\-_]?(\d{6,10})", RegexOptions.IgnoreCase);
-            if (match.Success) 
+            if (match.Success)
             {
                 return "RF" + match.Groups[1].Value;
             }

@@ -97,6 +97,59 @@ namespace doantotnghiep_api.Controllers
             }
         }
 
+        // =====================================================
+        // ✅ FIX: Check-status API - Thêm User Verification
+        // =====================================================
+        [HttpGet("check-status/{paymentCode}")]
+        public async Task<IActionResult> CheckPaymentStatus(
+            string paymentCode,
+            [FromQuery] int userId)  // 🔧 Thêm userId parameter
+        {
+            if (string.IsNullOrEmpty(paymentCode))
+                return BadRequest("Payment code is required");
+
+            var upperCode = paymentCode.Trim().ToUpper();
+
+            try
+            {
+                // 🔧 FIX: Kiểm tra booking của USER HIỆN TẠI + payment code + status
+                var booking = await _context.Bookings
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(b =>
+                        b.UserId == userId &&  // 🔐 Chỉ check booking của user này
+                        b.PaymentCode != null &&
+                        b.PaymentCode.Trim().ToUpper() == upperCode &&
+                        (b.Status == "Paid" || b.Status == "Hoàn thành"));
+
+                if (booking == null)
+                {
+                    Console.WriteLine($"[CheckStatus] No booking found for User={userId}, Code={upperCode}");
+                    return Ok(new
+                    {
+                        paid = false,
+                        message = "Payment not confirmed yet"
+                    });
+                }
+
+                Console.WriteLine($"[CheckStatus] ✅ Payment confirmed for User={userId}, Code={upperCode}");
+
+                return Ok(new
+                {
+                    paid = true,
+                    bookingId = booking.BookingId,
+                    totalAmount = booking.TotalAmount,
+                    seatCount = await _context.Bookings
+                        .Where(b => b.PaymentCode == upperCode && b.UserId == userId)
+                        .CountAsync()
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[CheckStatus Error] {ex.Message}");
+                return StatusCode(500, new { paid = false, error = ex.Message });
+            }
+        }
+
         // =============================================
         // HOLD SEAT
         // =============================================
@@ -195,55 +248,6 @@ namespace doantotnghiep_api.Controllers
             catch (Exception ex)
             {
                 return StatusCode(500, ex.ToString());
-            }
-        }
-
-        // =============================================
-        // CHECK PAYMENT STATUS (FOR FALLBACK)
-        // =============================================
-        [HttpGet("check-status/{paymentCode}")]
-        public async Task<IActionResult> CheckPaymentStatus(string paymentCode)
-        {
-            if (string.IsNullOrEmpty(paymentCode)) return BadRequest();
-
-            var upperCode = paymentCode.Trim().ToUpper();
-            
-            // Kiểm tra trong bảng Bookings xem đã có bản ghi nào hoàn thành với mã này chưa
-            var booking = await _context.Bookings
-                .AsNoTracking()
-                .FirstOrDefaultAsync(b => b.PaymentCode != null && b.PaymentCode.Trim().ToUpper() == upperCode && (b.Status == "Paid" || b.Status == "Hoàn thành"));
-
-            return Ok(new { paid = booking != null });
-        }
-
-        [HttpPost("simulate-success/{paymentCode}")]
-        public async Task<IActionResult> SimulateSuccess(string paymentCode)
-        {
-            var upperCode = paymentCode.ToUpper();
-            Console.WriteLine($"[DEBUG] 🛠️ NHẬN REQUEST GIẢ LẬP: {upperCode}");
-            var lockedSeats = await _context.SeatLocks.Where(x => x.PaymentCode != null && x.PaymentCode.ToUpper() == upperCode).ToListAsync();
-            if (!lockedSeats.Any()) return NotFound("Không tìm thấy ghế");
-            using (var transaction = await _context.Database.BeginTransactionAsync())
-            {
-                try {
-                    foreach (var lockItem in lockedSeats) {
-                        _context.Bookings.Add(new Bookings {
-                            UserId = lockItem.UserId, ShowtimeId = lockItem.ShowtimeId, SeatId = lockItem.SeatId,
-                            BookingDate = DateTime.UtcNow, Status = "Paid", TotalAmount = lockItem.TotalAmount ?? 0,
-                            PaymentCode = lockItem.PaymentCode, Combos = lockItem.Combos
-                        });
-                    }
-                    _context.SeatLocks.RemoveRange(lockedSeats);
-                    await _context.SaveChangesAsync();
-                    await transaction.CommitAsync();
-                    foreach (var lockItem in lockedSeats) {
-                        await _hub.Clients.Group($"Showtime_{lockItem.ShowtimeId}").SendAsync("ReceiveSeatStatus", lockItem.SeatId, "Locked", -1);
-                    }
-                    return Ok("Thành công");
-                } catch (Exception ex) {
-                    await transaction.RollbackAsync();
-                    return BadRequest(ex.Message);
-                }
             }
         }
 
