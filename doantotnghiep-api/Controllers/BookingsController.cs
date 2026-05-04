@@ -206,10 +206,14 @@ namespace doantotnghiep_api.Controllers
         {
             if (string.IsNullOrEmpty(paymentCode)) return BadRequest();
 
-            var upperCode = paymentCode.ToUpper();
-            var isPaid = await _context.Bookings.AnyAsync(b => b.PaymentCode != null && b.PaymentCode.ToUpper() == upperCode && b.Status == "Paid");
+            var upperCode = paymentCode.Trim().ToUpper();
+            
+            // Kiểm tra trong bảng Bookings xem đã có bản ghi nào hoàn thành với mã này chưa
+            var booking = await _context.Bookings
+                .AsNoTracking()
+                .FirstOrDefaultAsync(b => b.PaymentCode != null && b.PaymentCode.Trim().ToUpper() == upperCode && (b.Status == "Paid" || b.Status == "Hoàn thành"));
 
-            return Ok(new { paid = isPaid });
+            return Ok(new { paid = booking != null });
         }
 
         [HttpPost("simulate-success/{paymentCode}")]
