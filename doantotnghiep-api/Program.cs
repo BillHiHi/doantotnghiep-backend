@@ -8,7 +8,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 
 // ====================================================================
-// FIX: Định dạng DateTime cho PostgreSQL (Supabase)
+// FIX: Định dạng DateTime cho PostgreSQL (Supabase/Neon)
 // ====================================================================
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
@@ -28,12 +28,10 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(connectionString));
 
 // ====================================================================
-// 2️⃣ APPLICATION SERVICES (UPDATED WITH NEW SERVICES)
+// 2️⃣ APPLICATION SERVICES
 // ====================================================================
 builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddHostedService<MovieStatusUpdateService>();
-
-// Đăng ký các service quản lý Hợp đồng và Suất chiếu
 builder.Services.AddScoped<ContractService>();
 builder.Services.AddScoped<ShowtimeService>();
 builder.Services.AddScoped<SettlementService>();
@@ -43,7 +41,7 @@ builder.Services.AddScoped<ShowtimeAutomationService>();
 // 3️⃣ CACHING & COMPRESSION
 // ====================================================================
 builder.Services.AddMemoryCache();
-builder.Services.AddResponseCaching();  
+builder.Services.AddResponseCaching();
 builder.Services.AddResponseCompression(options =>
 {
     options.EnableForHttps = true;
@@ -61,7 +59,7 @@ builder.Services.AddControllers()
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddScoped<CaptchaService>();
-builder.Services.AddDistributedMemoryCache(); // Required for captcha session
+builder.Services.AddDistributedMemoryCache();
 
 // ====================================================================
 // 5️⃣ SWAGGER WITH JWT SUPPORT
@@ -163,11 +161,13 @@ var app = builder.Build();
 // 🔟 MIDDLEWARE PIPELINE
 // ====================================================================
 
-if (app.Environment.IsDevelopment())
+// FIX: Cho phép chạy Swagger ở cả môi trường Production (VPS)
+app.UseSwagger();
+app.UseSwaggerUI(options =>
 {
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+    options.SwaggerEndpoint("/swagger/v1/swagger.json", "Cinema API V1");
+    options.RoutePrefix = "swagger";
+});
 
 app.UseStaticFiles();
 app.UseResponseCompression();
@@ -188,7 +188,7 @@ app.MapHub<BookingHub>("/bookings");
 app.MapGet("/", () => "✅ Backend Cinema API is running... 🚀");
 
 // ====================================================================
-// 1️⃣2️⃣ DATABASE INITIALIZATION
+// 1️⃣2️⃣ DATABASE INITIALIZATION (Auto Migrate)
 // ====================================================================
 using (var scope = app.Services.CreateScope())
 {
