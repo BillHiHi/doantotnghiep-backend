@@ -11,6 +11,7 @@ namespace doantotnghiep_api.Dtos
         public string ScreenName { get; set; } = string.Empty;
 
         public DateTime StartTime { get; set; }
+        public string Time => StartTime.ToString("HH:mm");
         public DateTime EndTime { get; set; }
 
         public string MoviePoster { get; set; } = string.Empty;

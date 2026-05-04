@@ -62,15 +62,7 @@ namespace doantotnghiep_api.Controllers
 
             var totalTickets = await bookingsQuery.CountAsync();
 
-            // 💡 FIX: Chỉ lấy TotalAmount 1 lần cho mỗi PaymentCode để tránh nhân bản doanh thu
-            var distinctBookings = await bookingsQuery
-                .GroupBy(b => b.PaymentCode)
-                .Select(g => new {
-                    TotalAmount = g.Max(x => x.TotalAmount),
-                })
-                .ToListAsync();
-
-            var totalAmount = distinctBookings.Sum(x => x.TotalAmount);
+            var totalAmount = await bookingsQuery.SumAsync(b => (decimal?)b.TotalAmount) ?? 0;
             var totalRevenue = await bookingsQuery.SumAsync(b => (decimal?)b.Showtime.BasePrice) ?? 0;
             var totalFnb = totalAmount - totalRevenue;
 
@@ -150,18 +142,11 @@ namespace doantotnghiep_api.Controllers
             }
 
             var result = await bookingsQuery
-                .GroupBy(b => new { Date = b.BookingDate.Date, b.PaymentCode })
-                .Select(g => new
-                {
-                    Date = g.Key.Date,
-                    PaymentCode = g.Key.PaymentCode,
-                    Amount = g.Max(x => x.TotalAmount)
-                })
-                .GroupBy(x => x.Date)
+                .GroupBy(b => b.BookingDate.Date)
                 .Select(g => new
                 {
                     Date = g.Key,
-                    Revenue = g.Sum(x => x.Amount)
+                    Revenue = g.Sum(x => (decimal?)x.TotalAmount) ?? 0
                 })
                 .OrderBy(x => x.Date)
                 .ToListAsync();
@@ -214,20 +199,12 @@ namespace doantotnghiep_api.Controllers
             var result = await _context.Bookings
                 .Include(b => b.Showtime.Screen.Theater)
                 .Where(b => ((b.Status ?? "").ToLower() == "paid" || (b.Status ?? "").ToLower() == "collected" || (b.Status ?? "").ToLower() == "hoàn thành") && b.BookingDate >= start && b.BookingDate <= end)
-                .GroupBy(b => new { TheaterName = b.Showtime.Screen.Theater.Name, b.PaymentCode })
+                .GroupBy(b => b.Showtime.Screen.Theater.Name)
                 .Select(g => new
                 {
-                    TheaterName = g.Key.TheaterName ?? "N/A",
-                    PaymentCode = g.Key.PaymentCode,
-                    OrderAmount = g.Max(x => x.TotalAmount),
-                    TicketCount = g.Count()
-                })
-                .GroupBy(x => x.TheaterName)
-                .Select(g => new
-                {
-                    Theater = g.Key,
-                    Revenue = g.Sum(x => x.OrderAmount),
-                    Tickets = g.Sum(x => x.TicketCount)
+                    Theater = g.Key ?? "N/A",
+                    Revenue = g.Sum(x => (decimal?)x.TotalAmount) ?? 0,
+                    Tickets = g.Count()
                 })
                 .OrderByDescending(x => x.Revenue)
                 .Take(5)

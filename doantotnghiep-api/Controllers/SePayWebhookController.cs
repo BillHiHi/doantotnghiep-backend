@@ -199,7 +199,22 @@ namespace doantotnghiep_api.Controllers
                                     if (u != null && st != null)
                                     {
                                         var seatsNames = string.Join(", ", await sc.Seats.Where(s => targetSeats.Select(ts => ts.SeatId).Contains(s.SeatId)).Select(s => s.RowNumber + s.SeatNumber).ToListAsync());
-                                        await email.SendTicketEmailAsync(u.Email, u.FullName ?? "KH", u.PhoneNumber ?? "", st.Movie.Title, st.Movie.PosterUrl, st.Screen.Theater.Name, st.Screen.Theater.Address, st.Screen.ScreenName, st.StartTime, DateTime.Now, paymentCode, expectedAmount, seatsNames, firstLock.Combos);
+                                        // 🍿 Giải mã Combo bắp nước từ JSON sang text
+                                        string comboText = "";
+                                        if (!string.IsNullOrEmpty(firstLock.Combos)) {
+                                            try {
+                                                using var doc = System.Text.Json.JsonDocument.Parse(firstLock.Combos);
+                                                var items = new List<string>();
+                                                foreach (var item in doc.RootElement.EnumerateArray()) {
+                                                    string name = item.GetProperty("name").GetString() ?? "";
+                                                    int qty = item.GetProperty("qty").GetInt32();
+                                                    if (qty > 0) items.Add($"{qty}x {name}");
+                                                }
+                                                comboText = string.Join(", ", items);
+                                            } catch { comboText = firstLock.Combos; }
+                                        }
+
+                                        await email.SendTicketEmailAsync(u.Email, u.FullName ?? "KH", u.PhoneNumber ?? "", st.Movie.Title, st.Movie.PosterUrl, st.Screen.Theater.Name, st.Screen.Theater.Address, st.Screen.ScreenName, st.StartTime, DateTime.Now, paymentCode, expectedAmount, seatsNames, comboText);
                                     }
                                 }
                             }
