@@ -192,32 +192,37 @@ namespace doantotnghiep_api.Controllers
                         var showtimeIdForEmail = firstLock.ShowtimeId;
                         var finalPaymentCode = paymentCode;
                         var finalAmount = expectedAmount;
+                        var combosJson = firstLock.Combos; // Chụp lại JSON trước khi task chạy
 
                         _ = Task.Run(async () => {
+                            Console.WriteLine($"[EMAIL-TASK] 🚀 Bắt đầu tiến trình gửi mail cho giao dịch {finalPaymentCode}...");
                             try {
                                 using (var scope = _serviceProvider.CreateScope()) {
                                     var sc = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                                     var email = scope.ServiceProvider.GetRequiredService<IEmailService>();
                                     
-                                    var u = await sc.Users.FindAsync(userIdForEmail);
-                                    var st = await sc.Showtimes
+                                    var u = await sc.Users.AsNoTracking().FirstOrDefaultAsync(x => x.UserId == userIdForEmail);
+                                    var st = await sc.Showtimes.AsNoTracking()
                                         .Include(s => s.Movie)
                                         .Include(s => s.Screen).ThenInclude(scr => scr.Theater)
                                         .FirstOrDefaultAsync(s => s.ShowtimeId == showtimeIdForEmail);
                                     
                                     if (u != null && st != null) {
-                                        // Lấy danh sách tên ghế vừa thanh toán xong
-                                        var seatsNames = string.Join(", ", await sc.Bookings
+                                        Console.WriteLine($"[EMAIL-TASK] 👤 Tìm thấy User: {u.Email}, Phim: {st.Movie?.Title}");
+                                        
+                                        // Lấy danh sách tên ghế từ Bookings
+                                        var bks = await sc.Bookings.AsNoTracking()
                                             .Include(b => b.Seat)
                                             .Where(b => b.PaymentCode == finalPaymentCode)
-                                            .Select(b => b.Seat.RowNumber + b.Seat.SeatNumber)
-                                            .ToListAsync());
+                                            .ToListAsync();
+                                            
+                                        string seatsNames = string.Join(", ", bks.Select(b => b.Seat.RowNumber + b.Seat.SeatNumber));
                                         
                                         // 🍿 Giải mã Combo bắp nước
                                         string comboText = "";
-                                        if (!string.IsNullOrEmpty(firstLock.Combos)) {
+                                        if (!string.IsNullOrEmpty(combosJson)) {
                                             try {
-                                                using var doc = System.Text.Json.JsonDocument.Parse(firstLock.Combos);
+                                                using var doc = System.Text.Json.JsonDocument.Parse(combosJson);
                                                 var items = new List<string>();
                                                 foreach (var item in doc.RootElement.EnumerateArray()) {
                                                     string name = item.GetProperty("name").GetString() ?? "";
@@ -225,15 +230,18 @@ namespace doantotnghiep_api.Controllers
                                                     if (qty > 0) items.Add($"{qty}x {name}");
                                                 }
                                                 comboText = string.Join(", ", items);
-                                            } catch { comboText = firstLock.Combos; }
+                                            } catch { comboText = combosJson; }
                                         }
 
-                                        await email.SendTicketEmailAsync(u.Email, u.FullName??"KH", u.PhoneNumber??"", st.Movie.Title, st.Movie.PosterUrl, st.Screen.Theater.Name, st.Screen.Theater.Address, st.Screen.ScreenName, st.StartTime, DateTime.Now, finalPaymentCode, finalAmount, seatsNames, comboText);
-                                        Console.WriteLine($"[WEBHOOK] 📧 Đã gửi email vé tới {u.Email}");
+                                        await email.SendTicketEmailAsync(u.Email, u.FullName??"KH", u.PhoneNumber??"", st.Movie?.Title??"Phim", st.Movie?.PosterUrl??"", st.Screen?.Theater?.Name??"Rạp", st.Screen?.Theater?.Address??"", st.Screen?.ScreenName??"Phòng", st.StartTime, DateTime.Now, finalPaymentCode, finalAmount, seatsNames, comboText);
+                                        Console.WriteLine($"[EMAIL-TASK] ✅ Đã gửi email vé thành công tới {u.Email}");
+                                    } else {
+                                        Console.WriteLine($"[EMAIL-TASK] ⚠️ Không tìm thấy User (ID:{userIdForEmail}) hoặc Suất chiếu (ID:{showtimeIdForEmail})");
                                     }
                                 }
                             } catch(Exception ex){ 
-                                Console.WriteLine("[WEBHOOK EMAIL ERROR] " + ex.Message); 
+                                Console.WriteLine("[EMAIL-TASK LỖI] ❌ " + ex.Message); 
+                                if(ex.InnerException != null) Console.WriteLine("Inner: " + ex.InnerException.Message);
                             }
                         });
 
