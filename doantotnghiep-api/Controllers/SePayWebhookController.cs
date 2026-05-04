@@ -74,210 +74,159 @@ namespace doantotnghiep_api.Controllers
 
         [HttpPost]
         [HttpPost("receive")]
-        public async Task<IActionResult> ReceiveWebhook([FromBody] SePayTransaction payload)
+        public async Task<IActionResult> ReceiveWebhook([FromBody] System.Text.Json.JsonElement payload)
         {
-            // ==========================================
-            // 0. LOGGING VÀ BẢO MẬT (TẠM DISABLE API KEY ĐỂ TEST)
-            // ==========================================
-            var authHeader = Request.Headers["Authorization"].ToString();
-            Console.WriteLine($"[WEBHOOK] 📥 Nhận request. Header Authorization: '{authHeader}'");
-
-            /*
-            var configuredApiKey = _configuration["SePaySettings:ApiKey"];
-            var expectedHeader = $"Apikey {configuredApiKey}";
-            if (!string.IsNullOrEmpty(configuredApiKey) &&
-                (string.IsNullOrEmpty(authHeader) || !authHeader.Equals(expectedHeader, StringComparison.OrdinalIgnoreCase)))
+            try
             {
-                Console.WriteLine("[WEBHOOK] ❌ Cảnh báo: Sai API Key hoặc chưa cấu hình đúng trên SePay Dashboard!");
-                return Unauthorized(new { success = false, message = "Invalid API Key" });
-            }
-            */
+                // ==========================================
+                // 0. LOGGING DỮ LIỆU THÔ ĐỂ DEBUG
+                // ==========================================
+                string rawJson = payload.GetRawText();
+                Console.WriteLine($"[WEBHOOK] 📥 NHẬN DỮ LIỆU THÔ: {rawJson}");
 
-            Console.WriteLine($"[WEBHOOK] 📥 Nhận dữ liệu: Content='{payload?.content}', Ref='{payload?.referenceCode}', Amount={payload?.transferAmount}");
-
-            if (payload == null)
-            {
-                return BadRequest(new { success = false, message = "Invalid data" });
-            }
-
-            // 1. Tách lấy mã đơn hàng (RFxxxxxx)
-            string rawContent = payload.content ?? "";
-            string paymentCode = ExtractPaymentCode(rawContent) ?? ExtractPaymentCode(payload.referenceCode);
-
-            if (string.IsNullOrEmpty(paymentCode))
-            {
-                Console.WriteLine($"[WEBHOOK] ❌ Không tìm thấy mã RF. Thử tìm số 6 chữ số...");
-                // Thử tìm số 6 chữ số bất kỳ nếu không có RF
-                var matchDigits = Regex.Match(rawContent, @"(\d{6})");
-                if (matchDigits.Success) {
-                    paymentCode = "RF" + matchDigits.Groups[1].Value;
+                // 1. Tách lấy các trường cần thiết an toàn
+                string content = payload.TryGetProperty("content", out var pContent) ? pContent.ToString() : "";
+                string referenceCode = payload.TryGetProperty("referenceCode", out var pRef) ? pRef.ToString() : "";
+                
+                decimal transferAmount = 0;
+                if (payload.TryGetProperty("transferAmount", out var pAmount)) {
+                    decimal.TryParse(pAmount.ToString(), out transferAmount);
                 }
-            }
 
-            if (string.IsNullOrEmpty(paymentCode))
-            {
-                Console.WriteLine($"[WEBHOOK] ❌ Vẫn không tìm thấy mã. Content: '{payload.content}'");
-                return Ok(new { success = false, message = "Payment code not found" });
-            }
+                if (string.IsNullOrEmpty(content) && string.IsNullOrEmpty(referenceCode)) {
+                    Console.WriteLine("[WEBHOOK] ❌ Dữ liệu không chứa content hoặc referenceCode.");
+                    return BadRequest("Invalid payload structure");
+                }
 
-            paymentCode = paymentCode.ToUpper().Replace(" ", "");
-            Console.WriteLine($"[WEBHOOK] 🔍 Đang xử lý mã: {paymentCode}");
+                // 2. Tách lấy mã đơn hàng (RFxxxxxx)
+                string paymentCode = ExtractPaymentCode(content) ?? ExtractPaymentCode(referenceCode);
 
-            // ==========================================
-            // BƯỚC KIỂM TRA TRÙNG LẶP (IDEMPOTENCY)
-            // ==========================================
-            bool isAlreadyPaid = await _context.Bookings
-                .AsNoTracking()
-                .AnyAsync(b => b.PaymentCode == paymentCode && b.Status == "Paid");
-
-            if (isAlreadyPaid)
-            {
-                Console.WriteLine($"[WEBHOOK] ⚠️ Đơn hàng {paymentCode} đã được xử lý trước đó. Bỏ qua.");
-                return Ok(new { success = true, message = "Order already processed" });
-            }
-
-            // 3. Tìm các ghế đang giữ với mã này
-            var lockedSeats = await _context.SeatLocks
-                .Where(x => x.PaymentCode != null)
-                .ToListAsync();
-
-            // Tìm thủ công để xử lý các vấn đề về khoảng trắng hoặc hoa thường
-            var targetSeats = lockedSeats
-                .Where(x => x.PaymentCode.Trim().ToUpper() == paymentCode)
-                .ToList();
-
-            if (!targetSeats.Any())
-            {
-                Console.WriteLine($"[WEBHOOK] ❌ KHÔNG TÌM THẤY GHẾ cho mã {paymentCode}. Danh sách mã đang có trong DB: {string.Join(", ", lockedSeats.Select(s => s.PaymentCode))}");
-                return Ok(new { success = false, message = "No pending seats found" });
-            }
-
-            Console.WriteLine($"[WEBHOOK] 📍 Tìm thấy {targetSeats.Count} ghế cho mã {paymentCode}.");
-
-            // 4. Kiểm tra số tiền
-            decimal amountIn = payload.transferAmount;
-            decimal expectedAmount = targetSeats.Sum(s => s.TotalAmount ?? 0);
-            decimal tolerance = 5000;
-
-            Console.WriteLine($"[WEBHOOK] 💰 Kiểm tra tiền: Nhận={amountIn}, Cần={expectedAmount} (Sai số cho phép: {tolerance})");
-
-            if (Math.Abs(amountIn - expectedAmount) > tolerance)
-            {
-                Console.WriteLine($"[WEBHOOK] ❌ Sai lệch số tiền. Chênh lệch: {Math.Abs(amountIn - expectedAmount)}. Vẫn tiếp tục xử lý nếu cần hoặc trả lỗi.");
-                // Tạm thời cho phép nếu chênh lệch không quá lớn hoặc log lại
-                // return Ok(new { success = false, message = "Insufficient amount" });
-            }
-
-            // ==========================================
-            // SỬ DỤNG TRANSACTION
-            // ==========================================
-            using (var transaction = await _context.Database.BeginTransactionAsync())
-            {
-                try
+                if (string.IsNullOrEmpty(paymentCode))
                 {
-                    var now = DateTime.UtcNow;
-
-                    // 5. Chuyển từ SeatLock sang Bookings
-                    foreach (var lockItem in lockedSeats)
-                    {
-                        var booking = new Bookings
-                        {
-                            UserId = lockItem.UserId,
-                            ShowtimeId = lockItem.ShowtimeId,
-                            SeatId = lockItem.SeatId,
-                            BookingDate = now,
-                            Status = "Paid",
-                            TotalAmount = lockItem.TotalAmount ?? 0,
-                            PaymentCode = lockItem.PaymentCode,
-                            Combos = lockItem.Combos,
-                            UserVoucherId = lockItem.UserVoucherId
-                        };
-                        _context.Bookings.Add(booking);
+                    Console.WriteLine($"[WEBHOOK] 🔍 Không thấy RF trong content. Thử tìm số 6-10 chữ số...");
+                    var matchDigits = Regex.Match(content, @"(\d{6,10})");
+                    if (matchDigits.Success) {
+                        paymentCode = "RF" + matchDigits.Groups[1].Value;
                     }
+                }
 
-                    await _context.SaveChangesAsync();
+                if (string.IsNullOrEmpty(paymentCode))
+                {
+                    Console.WriteLine($"[WEBHOOK] ❌ Không xác định được mã thanh toán từ nội dung: {content}");
+                    return Ok(new { success = false, message = "Payment code not found" });
+                }
 
-                    // 6. Tặng điểm & Voucher
-                    var firstLock = lockedSeats.First();
-                    await AwardPoints(firstLock.UserId, 10, $"Tích điểm đặt vé (Mã: {paymentCode})");
+                paymentCode = paymentCode.ToUpper().Replace(" ", "");
+                Console.WriteLine($"[WEBHOOK] 🔍 Đang xử lý mã: {paymentCode} | Số tiền: {transferAmount}");
 
-                    if (firstLock.UserVoucherId.HasValue)
+                // 3. Kiểm tra trùng lặp (Idempotency)
+                bool isAlreadyPaid = await _context.Bookings
+                    .AsNoTracking()
+                    .AnyAsync(b => b.PaymentCode != null && b.PaymentCode.Trim().ToUpper() == paymentCode && (b.Status == "Paid" || b.Status == "Hoàn thành"));
+
+                if (isAlreadyPaid)
+                {
+                    Console.WriteLine($"[WEBHOOK] ⚠️ Đơn hàng {paymentCode} đã được xử lý. Bỏ qua.");
+                    return Ok(new { success = true, message = "Already processed" });
+                }
+
+                // 4. Tìm các ghế đang giữ
+                var lockedSeats = await _context.SeatLocks.Where(x => x.PaymentCode != null).ToListAsync();
+                var targetSeats = lockedSeats.Where(x => x.PaymentCode.Trim().ToUpper() == paymentCode).ToList();
+
+                if (!targetSeats.Any())
+                {
+                    Console.WriteLine($"[WEBHOOK] ❌ KHÔNG TÌM THẤY GHẾ cho mã {paymentCode}. Danh sách mã trong DB: {string.Join(", ", lockedSeats.Select(s => s.PaymentCode))}");
+                    return Ok(new { success = false, message = "No pending seats found" });
+                }
+
+                // 5. Kiểm tra số tiền (Tolerance 5000đ)
+                decimal expectedAmount = targetSeats.Sum(s => s.TotalAmount ?? 0);
+                if (Math.Abs(transferAmount - expectedAmount) > 5000)
+                {
+                    Console.WriteLine($"[WEBHOOK] 💰 Cảnh báo: Tiền lệch (Nhận: {transferAmount}, Cần: {expectedAmount})");
+                }
+
+                // 6. Xử lý lưu Booking trong Transaction
+                using (var transaction = await _context.Database.BeginTransactionAsync())
+                {
+                    try
                     {
-                        var uv = await _context.UserVouchers.FindAsync(firstLock.UserVoucherId.Value);
-                        if (uv != null) { uv.IsUsed = true; uv.UsedAt = now; }
-                    }
-
-                    // 7. Xoá lock
-                    _context.SeatLocks.RemoveRange(lockedSeats);
-                    await _context.SaveChangesAsync();
-
-                    // Commit transaction
-                    await transaction.CommitAsync();
-                    Console.WriteLine($"[WEBHOOK] ✅ Giao dịch {paymentCode} thành công!");
-
-                    // 8. Gửi email ngầm
-                    var targetUserId = firstLock.UserId;
-                    var targetShowtimeId = firstLock.ShowtimeId;
-                    var targetCombos = firstLock.Combos;
-                    var targetPaymentCode = paymentCode;
-                    var targetSeatIds = lockedSeats.Select(s => s.SeatId).ToList();
-                    var targetTotalAmount = lockedSeats.Sum(s => s.TotalAmount ?? 0);
-
-                    _ = Task.Run(async () => {
-                        try
+                        var now = DateTime.UtcNow;
+                        foreach (var lockItem in targetSeats)
                         {
-                            using (var scope = _serviceProvider.CreateScope())
+                            var booking = new Bookings
                             {
-                                var scopedContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                                var scopedEmailService = scope.ServiceProvider.GetRequiredService<IEmailService>();
-                                var user = await scopedContext.Users.FindAsync(targetUserId);
-                                var showtime = await scopedContext.Showtimes
-                                    .Include(s => s.Movie)
-                                    .Include(s => s.Screen).ThenInclude(sc => sc.Theater)
-                                    .FirstOrDefaultAsync(s => s.ShowtimeId == targetShowtimeId);
-
-                                if (user != null && showtime != null)
-                                {
-                                    var seats = await scopedContext.Seats.Where(s => targetSeatIds.Contains(s.SeatId)).ToListAsync();
-                                    string seatNames = string.Join(", ", seats.Select(s => $"{s.RowNumber}{s.SeatNumber}"));
-
-                                    await scopedEmailService.SendTicketEmailAsync(
-                                        user.Email, user.FullName ?? "Khách hàng", user.PhoneNumber ?? "N/A",
-                                        showtime.Movie.Title, showtime.Movie.PosterUrl,
-                                        showtime.Screen.Theater.Name, showtime.Screen.Theater.Address, showtime.Screen.ScreenName,
-                                        showtime.StartTime, DateTime.Now, targetPaymentCode, targetTotalAmount, seatNames, targetCombos
-                                    );
-                                }
-                            }
+                                UserId = lockItem.UserId,
+                                ShowtimeId = lockItem.ShowtimeId,
+                                SeatId = lockItem.SeatId,
+                                BookingDate = now,
+                                Status = "Paid",
+                                TotalAmount = lockItem.TotalAmount ?? 0,
+                                PaymentCode = lockItem.PaymentCode,
+                                Combos = lockItem.Combos,
+                                UserVoucherId = lockItem.UserVoucherId
+                            };
+                            _context.Bookings.Add(booking);
                         }
-                        catch (Exception ex) { Console.WriteLine("[WEBHOOK] 📧 Lỗi gửi email: " + ex.Message); }
-                    });
 
-                    // 9. Notify SignalR: Gửi trạng thái "Booked" và userId = -1 để báo hiệu thanh toán thành công
-                    foreach (var lockItem in lockedSeats)
-                    {
-                        await _hub.Clients.Group($"Showtime_{lockItem.ShowtimeId}")
-                            .SendAsync("ReceiveSeatStatus", lockItem.SeatId, "Booked", -1);
+                        await _context.SaveChangesAsync();
+
+                        // 7. Tặng điểm & Voucher
+                        var firstLock = targetSeats.First();
+                        await AwardPoints(firstLock.UserId, 10, $"Đặt vé phim (Mã: {paymentCode})");
+
+                        if (firstLock.UserVoucherId.HasValue)
+                        {
+                            var uv = await _context.UserVouchers.FindAsync(firstLock.UserVoucherId.Value);
+                            if (uv != null) { uv.IsUsed = true; uv.UsedAt = now; }
+                        }
+
+                        Console.WriteLine($"[WEBHOOK] ✅ Giao dịch {paymentCode} THÀNH CÔNG!");
+
+                        _ = Task.Run(async () => {
+                            try {
+                                using (var scope = _serviceProvider.CreateScope()) {
+                                    var sc = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                                    var email = scope.ServiceProvider.GetRequiredService<IEmailService>();
+                                    var u = await sc.Users.FindAsync(firstLock.UserId);
+                                    var st = await sc.Showtimes.Include(s=>s.Movie).Include(s=>s.Screen).ThenInclude(scr=>scr.Theater).FirstOrDefaultAsync(s=>s.ShowtimeId == firstLock.ShowtimeId);
+                                    if(u!=null && st!=null){
+                                        var seatsNames = string.Join(", ", await sc.Seats.Where(s => targetSeats.Select(ts=>ts.SeatId).Contains(s.SeatId)).Select(s=>s.RowNumber + s.SeatNumber).ToListAsync());
+                                        await email.SendTicketEmailAsync(u.Email, u.FullName??"KH", u.PhoneNumber??"", st.Movie.Title, st.Movie.PosterUrl, st.Screen.Theater.Name, st.Screen.Theater.Address, st.Screen.ScreenName, st.StartTime, DateTime.Now, paymentCode, expectedAmount, seatsNames, firstLock.Combos);
+                                    }
+                                }
+                            } catch(Exception ex){ Console.WriteLine("[EMAIL ERROR] " + ex.Message); }
+                        });
+
+                        foreach (var item in targetSeats) {
+                            await _hub.Clients.Group($"Showtime_{item.ShowtimeId}").SendAsync("ReceiveSeatStatus", item.SeatId, "Booked", -1);
+                        }
+
+                        _context.SeatLocks.RemoveRange(targetSeats);
+                        await _context.SaveChangesAsync();
+                        await transaction.CommitAsync();
+
+                        return Ok(new { success = true });
                     }
-
-                    return Ok(new { success = true });
+                    catch (Exception ex)
+                    {
+                        await transaction.RollbackAsync();
+                        throw;
+                    }
                 }
-                catch (Exception ex)
-                {
-                    await transaction.RollbackAsync();
-                    Console.WriteLine($"[WEBHOOK] ❌ Lỗi: {ex.Message}");
-                    return StatusCode(500, new { success = false });
-                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[WEBHOOK ERROR] ❌ Lỗi nghiêm trọng: {ex.Message}");
+                return StatusCode(500, "Internal Server Error");
             }
         }
 
         private string ExtractPaymentCode(string transferContent)
         {
             if (string.IsNullOrEmpty(transferContent)) return null;
-            
-            // Regex linh hoạt: Tìm chữ RF và theo sau là 6-10 chữ số
             var match = Regex.Match(transferContent, @"RF[\s\-_]?(\d{6,10})", RegexOptions.IgnoreCase);
-            
             if (match.Success) 
             {
                 return "RF" + match.Groups[1].Value;
