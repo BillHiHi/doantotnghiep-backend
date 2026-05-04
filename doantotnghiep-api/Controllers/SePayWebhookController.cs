@@ -226,11 +226,11 @@ namespace doantotnghiep_api.Controllers
                         catch (Exception ex) { Console.WriteLine("[WEBHOOK] 📧 Lỗi gửi email: " + ex.Message); }
                     });
 
-                    // 9. Notify SignalR
+                    // 9. Notify SignalR: Gửi trạng thái "Booked" và userId = -1 để báo hiệu thanh toán thành công
                     foreach (var lockItem in lockedSeats)
                     {
                         await _hub.Clients.Group($"Showtime_{lockItem.ShowtimeId}")
-                            .SendAsync("ReceiveSeatStatus", lockItem.SeatId, "Locked", -1);
+                            .SendAsync("ReceiveSeatStatus", lockItem.SeatId, "Booked", -1);
                     }
 
                     return Ok(new { success = true });
