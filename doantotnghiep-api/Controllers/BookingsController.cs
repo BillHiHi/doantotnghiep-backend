@@ -497,7 +497,7 @@ namespace doantotnghiep_api.Controllers
                 // Notify SignalR: Seat is now permanently occupied
                 await _hub.Clients
                     .Group($"Showtime_{request.ShowtimeId}")
-                    .SendAsync("ReceiveSeatStatus", request.SeatId, "Locked", -1);
+                    .SendAsync("ReceiveSeatStatus", request.SeatId, "Booked", -1);
 
                 return Ok("Thanh toán thành công");
             }
@@ -662,7 +662,7 @@ namespace doantotnghiep_api.Controllers
                 {
                     await _hub.Clients
                         .Group($"Showtime_{request.ShowtimeId}")
-                        .SendAsync("ReceiveSeatStatus", seatId, "Locked", -1);
+                        .SendAsync("ReceiveSeatStatus", seatId, "Booked", -1);
                 }
 
                 return Ok("Thanh toán thành công");
