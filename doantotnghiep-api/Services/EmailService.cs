@@ -72,25 +72,8 @@ namespace doantotnghiep_api.Services
 
         public async Task SendTicketEmailAsync(string toEmail, string fullName, string phoneNumber, string movieTitle, string posterUrl, string theaterName, string theaterAddress, string screenName, DateTime showtime, DateTime bookingDate, string paymentCode, decimal totalAmount, string seats, string comboDetails)
         {
-            var qrUrl = $"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={paymentCode}";
             var subject = $"Vé Cinema: {movieTitle} - {paymentCode}";
-            var baseUrl = _settings.AppBaseUrl ?? _configuration["AppBaseUrl"] ?? "https://doantotnghiep-backend-whqz.onrender.com"; 
             
-            if (string.IsNullOrEmpty(posterUrl)) 
-            {
-                posterUrl = "https://placehold.co/300x450?text=No+Poster";
-            }
-            else 
-            {
-                // 1. Lấy tên file ảnh (ví dụ: lấy 'abc.jpg' từ 'uploads/abc.jpg' hoặc 'http://.../abc.jpg')
-                string fileName = posterUrl.Split('/').Last().Split('\\').Last();
-                
-                // 2. Ép buộc trỏ về đường dẫn uploads của Backend
-                posterUrl = $"{baseUrl.TrimEnd('/')}/uploads/{fileName.Replace(" ", "%20")}";
-            }
-            
-            Console.WriteLine($"[EMAIL] 🎞️ Final Poster URL: {posterUrl}");
-
             var body = $@"
 <div style='background-color:#f8fafc; padding:30px; font-family:""Segoe UI"", Tahoma, Geneva, Verdana, sans-serif; color:#1e293b; line-height:1.5;'>
     <div style='max-width:600px; margin:0 auto; background:#fff; border-radius:12px; overflow:hidden; box-shadow:0 10px 15px -3px rgba(0,0,0,0.1);'>
@@ -124,24 +107,17 @@ namespace doantotnghiep_api.Services
 
             <div style='background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:20px; margin-bottom:20px;'>
                 <h4 style='text-transform:uppercase; color:#94a3b8; font-size:12px; margin:0 0 15px 0; letter-spacing:1px; text-align:center;'>Thông tin vé xem phim</h4>
-                <table width='100%' cellpadding='0' cellspacing='0'>
-                    <tr>
-                        <td width='120' valign='top'>
-                            <img src='{posterUrl}' width='100' style='display:block; width:100px; max-width:100px; border-radius:8px; box-shadow:0 4px 6px -1px rgba(0,0,0,0.1); outline:none; text-decoration:none;' alt='Poster phim {movieTitle}'>
-                        </td>
-                        <td valign='top' style='padding-left:20px;'>
-                            <h3 style='margin:0 0 12px 0; color:#1e1b4b; font-size:18px; line-height:1.3;'>{movieTitle}</h3>
-                            
-                            <div style='font-size:14px; color:#334155;'>
-                                <p style='margin:6px 0;'><strong>Rạp:</strong> {theaterName}</p>
-                                <p style='margin:4px 0 10px 0; font-size:12px; color:#64748b;'>{theaterAddress}</p>
-                                <p style='margin:6px 0;'><strong>Phòng chiếu:</strong> {screenName}</p>
-                                <p style='margin:6px 0;'><strong>Giờ chiếu:</strong> <span style='color:#0369a1; font-weight:600;'>{showtime:HH:mm} | {showtime:dd/MM/yyyy}</span></p>
-                                <p style='margin:6px 0;'><strong>Vị trí ghế:</strong> <span style='color:#e11d48; font-weight:bold;'>{seats}</span></p>
-                            </div>
-                        </td>
-                    </tr>
-                </table>
+                <div style='padding:10px 0;'>
+                    <h3 style='margin:0 0 12px 0; color:#1e1b4b; font-size:18px; line-height:1.3;'>{movieTitle}</h3>
+                    
+                    <div style='font-size:14px; color:#334155;'>
+                        <p style='margin:6px 0;'><strong>Rạp:</strong> {theaterName}</p>
+                        <p style='margin:4px 0 10px 0; font-size:12px; color:#64748b;'>{theaterAddress}</p>
+                        <p style='margin:6px 0;'><strong>Phòng chiếu:</strong> {screenName}</p>
+                        <p style='margin:6px 0;'><strong>Giờ chiếu:</strong> <span style='color:#0369a1; font-weight:600;'>{showtime:HH:mm} | {showtime:dd/MM/yyyy}</span></p>
+                        <p style='margin:6px 0;'><strong>Vị trí ghế:</strong> <span style='color:#e11d48; font-weight:bold;'>{seats}</span></p>
+                    </div>
+                </div>
             </div>
 
             {(string.IsNullOrEmpty(comboDetails) ? "" : $@"
@@ -156,12 +132,9 @@ namespace doantotnghiep_api.Services
             </div>
 
             <div style='text-align:center; padding-top:20px; margin-top:10px; border-top:2px dashed #f1f5f9;'>
-                <p style='margin:0 0 15px 0; color:#64748b; font-size:13px;'>Mã QR check-in tại quầy vé</p>
-                <div style='display:inline-block; padding:15px; background:#fff; border:1px solid #e2e8f0; border-radius:8px;'>
-                    <img src='{qrUrl}' width='140' height='140' style='display:block;' alt='QR Code'>
-                </div>
-                <div style='margin-top:10px;'>
-                    <code style='background:#f1f5f9; padding:5px 15px; border-radius:4px; font-size:18px; font-weight:700; color:#0f172a; letter-spacing:2px;'>{paymentCode}</code>
+                <p style='margin:0 0 10px 0; color:#64748b; font-size:13px;'>Mã xác nhận (Check-in)</p>
+                <div style='margin-bottom:15px;'>
+                    <code style='background:#f1f5f9; padding:8px 20px; border-radius:4px; font-size:20px; font-weight:700; color:#0f172a; letter-spacing:2px; border:1px solid #e2e8f0;'>{paymentCode}</code>
                 </div>
                 <p style='margin:10px 0 0 0; color:#94a3b8; font-size:11px;'>Vui lòng cung cấp mã này cho nhân viên tại rạp để nhận vé giấy</p>
             </div>
