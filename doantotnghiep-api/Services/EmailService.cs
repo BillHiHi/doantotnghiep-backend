@@ -77,15 +77,19 @@ namespace doantotnghiep_api.Services
             var baseUrl = _settings.AppBaseUrl ?? _configuration["AppBaseUrl"] ?? "https://doantotnghiep-backend-whqz.onrender.com"; 
             
             if (string.IsNullOrEmpty(posterUrl)) 
-                posterUrl = "https://placehold.co/300x450?text=No+Poster";
-            else if (!posterUrl.StartsWith("http"))
             {
-                // Clean path like what we did on frontend
-                var cleanPath = posterUrl.Replace("wwwroot/", "").Replace("uploads/", "").TrimStart('/').Replace(" ", "%20");
-                posterUrl = $"{baseUrl.TrimEnd('/')}/uploads/{cleanPath}";
+                posterUrl = "https://placehold.co/300x450?text=No+Poster";
+            }
+            else 
+            {
+                // 1. Lấy tên file ảnh (ví dụ: lấy 'abc.jpg' từ 'uploads/abc.jpg' hoặc 'http://.../abc.jpg')
+                string fileName = posterUrl.Split('/').Last().Split('\\').Last();
+                
+                // 2. Ép buộc trỏ về đường dẫn uploads của Backend
+                posterUrl = $"{baseUrl.TrimEnd('/')}/uploads/{fileName.Replace(" ", "%20")}";
             }
             
-            Console.WriteLine($"[EMAIL] 🎞️ Poster URL: {posterUrl}");
+            Console.WriteLine($"[EMAIL] 🎞️ Final Poster URL: {posterUrl}");
 
             var body = $@"
 <div style='background-color:#f8fafc; padding:30px; font-family:""Segoe UI"", Tahoma, Geneva, Verdana, sans-serif; color:#1e293b; line-height:1.5;'>
